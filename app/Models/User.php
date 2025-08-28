@@ -15,6 +15,8 @@ class User extends Authenticatable
     /**
      * The attributes that are mass assignable.
      *
+     * Keep admin flags out of fillable for security.
+     *
      * @var list<string>
      */
     protected $fillable = [
@@ -34,7 +36,7 @@ class User extends Authenticatable
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * Attribute casting.
      *
      * @return array<string, string>
      */
@@ -43,6 +45,8 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_admin' => 'boolean', // <- add this
+            // 'role'            => 'string',  // <- uncomment if you use a role column
         ];
     }
 }

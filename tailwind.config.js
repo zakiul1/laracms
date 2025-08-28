@@ -1,21 +1,23 @@
-import defaultTheme from 'tailwindcss/defaultTheme';
-import forms from '@tailwindcss/forms';
+// tailwind.config.js
+import forms from "@tailwindcss/forms";
+import typography from "@tailwindcss/typography";
+import penguinui from "penguinui/plugin";
 
-/** @type {import('tailwindcss').Config} */
 export default {
     content: [
-        './vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php',
-        './storage/framework/views/*.php',
-        './resources/views/**/*.blade.php',
+        "./resources/**/*.blade.php",
+        "./resources/**/*.{js,ts,vue,jsx,tsx}",
+        "./storage/framework/views/*.php",
+        "./node_modules/penguinui/dist/**/*.js", // << scan Penguin UI
     ],
-
     theme: {
         extend: {
-            fontFamily: {
-                sans: ['Figtree', ...defaultTheme.fontFamily.sans],
-            },
+            // Customize brand colors, fonts, etc. if needed
         },
     },
-
-    plugins: [forms],
+    plugins: [
+        forms,
+        typography,
+        penguinui, // << Penguin UI Tailwind plugin
+    ],
 };
