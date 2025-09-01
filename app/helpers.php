@@ -3,13 +3,12 @@
 use App\Support\Cms\PostTypeRegistry;
 use App\Support\Cms\TaxonomyRegistry;
 use App\Support\Cms\TermsRegistry;
+use App\Support\Cms\AdminMenuRegistry;
 use App\Support\Hooks\HookManager;
 
 /*
 |--------------------------------------------------------------------------
 | Hook helpers (WordPress-style)
-| Thin wrappers around your HookManager so views and modules can use
-| add_action()/do_action() and add_filter()/apply_filters().
 |--------------------------------------------------------------------------
 */
 
@@ -43,13 +42,10 @@ if (!function_exists('apply_filters')) {
 
 /*
 |--------------------------------------------------------------------------
-| CMS registries: CPT / Taxonomy / Terms
+| CPT & Taxonomy helpers
 |--------------------------------------------------------------------------
 */
 
-/**
- * Register a Custom Post Type (CPT) — WP-style.
- */
 if (!function_exists('register_post_type')) {
     function register_post_type(string $slug, array $args = []): void
     {
@@ -57,24 +53,20 @@ if (!function_exists('register_post_type')) {
     }
 }
 
-/**
- * Register a taxonomy for one or more CPTs — WP-style.
- *
- * @param string|array $objectType CPT slug or array of CPT slugs
- */
 if (!function_exists('register_taxonomy')) {
+    /**
+     * @param string|array $objectType
+     */
     function register_taxonomy(string $taxonomy, $objectType, array $args = []): void
     {
         app(TaxonomyRegistry::class)->register($taxonomy, $objectType, $args);
     }
 }
 
-/**
- * Register initial terms for a taxonomy (optional seeding).
- *
- * @param array<int,array{slug?:string,name:string,parent?:string}> $terms
- */
 if (!function_exists('register_terms')) {
+    /**
+     * @param array<int,array{slug?:string,name:string,parent?:string}> $terms
+     */
     function register_terms(string $taxonomy, array $terms): void
     {
         app(TermsRegistry::class)->add($taxonomy, $terms);
@@ -83,34 +75,54 @@ if (!function_exists('register_terms')) {
 
 /*
 |--------------------------------------------------------------------------
-| Lucide icon helper
+| Admin Menu helper (simplest API)
 |--------------------------------------------------------------------------
 */
 
-/**
- * Render a Lucide icon by slug using Blade dynamic component.
- * Requires blade-lucide-icons. Works even if your wrapper component is missing.
- */
-if (!function_exists('lucide_icon')) {
-    function lucide_icon(string $name, string $class = 'w-4 h-4'): string
+if (!function_exists('register_admin_menu')) {
+    /**
+     * Two forms:
+     * 1) register_admin_menu('posts', ['label'=>'All Posts','route'=>'admin.posts.index','icon'=>'lucide-list','order'=>10]);
+     * 2) register_admin_menu(['key'=>'posts','label'=>'Posts','icon'=>'lucide-file-text','order'=>10,'children'=>[ ... ]]);
+     */
+    function register_admin_menu(string|array $groupKeyOrItem, ?array $child = null): void
     {
-        $slug = str_replace('_', '-', $name);
+        /** @var AdminMenuRegistry $menu */
+        $menu = app(AdminMenuRegistry::class);
 
-        // Prefer a custom wrapper component if you created it:
-        // resources/views/components/lucide.blade.php
-        if (function_exists('view') && view()->exists('components.lucide')) {
-            return view('components.lucide', ['name' => $slug, 'class' => $class])->render();
+        if (is_array($groupKeyOrItem) && $child === null) {
+            $menu->add($groupKeyOrItem);
+            return;
         }
 
-        // Fallback tiny view that renders a dynamic component, if you added it
-        if (function_exists('view') && view()->exists('components.dynamic-icon-fallback')) {
-            return view('components.dynamic-icon-fallback', [
-                'component' => 'lucide-' . $slug,
-                'class' => $class,
-            ])->render();
+        if (is_string($groupKeyOrItem) && is_array($child)) {
+            $menu->addChild($groupKeyOrItem, $child);
+            return;
         }
 
-        // Last-resort placeholder (prevents crashes if views aren’t available yet)
+        throw new InvalidArgumentException('register_admin_menu expects (array) or (groupKey, childArray).');
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Lucide icon render (optional)
+|--------------------------------------------------------------------------
+*/
+if (!function_exists('lucide_icon')) {
+    function lucide_icon(string $slug, string $class = 'w-4 h-4')
+    {
+        // If you installed blade-lucide-icons: <x-lucide-... />
+        if (function_exists('view') && \Illuminate\Support\Facades\View::exists('components.lucide-' . $slug)) {
+            return view('components.lucide-' . $slug, ['class' => $class])->render();
+        }
+
+        // Dynamic component fallback if you registered it
+        if (function_exists('view') && \Illuminate\Support\Facades\View::exists('components.dynamic-icon-fallback')) {
+            return view('components.dynamic-icon-fallback', ['component' => 'lucide-' . $slug, 'class' => $class])->render();
+        }
+
+        // Last-resort invisible span to avoid errors
         return '<span class="' . e($class) . '" aria-hidden="true"></span>';
     }
 }

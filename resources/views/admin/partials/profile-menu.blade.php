@@ -5,8 +5,7 @@
         x-bind:class="userDropdownIsOpen ? 'bg-primary/10 dark:bg-primary-dark/10' : ''" aria-haspopup="true"
         x-on:click="userDropdownIsOpen = ! userDropdownIsOpen" x-bind:aria-expanded="userDropdownIsOpen">
 
-        <img src="https://penguinui.s3.amazonaws.com/component-assets/avatar-7.webp"
-            class="size-8 object-cover rounded-radius" alt="avatar" aria-hidden="true" />
+
         <div class="hidden md:flex flex-col">
             <span class="text-sm font-bold text-on-surface-strong dark:text-on-surface-dark-strong">
                 {{ auth()->user()->name ?? 'User' }}
