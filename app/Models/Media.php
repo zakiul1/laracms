@@ -32,9 +32,21 @@ class Media extends Model
 
     public function getUrlAttribute(): ?string
     {
-        return $this->path
-            ? Storage::disk($this->disk ?: 'public')->url($this->path)
-            : null;
+        if (!$this->path) {
+            return null;
+        }
+
+        // Prefer the record’s disk; fall back to app default, then 'public'
+        $disk = $this->disk ?: config('filesystems.default', 'public');
+
+        // Try the disk’s native URL generator first (works for 'public', S3, etc.)
+        try {
+            return Storage::disk($disk)->url($this->path);
+        } catch (\Throwable $e) {
+            // If the disk can’t generate URLs (e.g., 'local'), fall back to /storage symlink
+            // Make sure you've run: php artisan storage:link
+            return asset('storage/' . ltrim($this->path, '/'));
+        }
     }
 
     /** raw pivot rows for this media */
@@ -59,7 +71,7 @@ class Media extends Model
     {
         $tr = (new TermRelationship())->getTable(); // term_relationships
         $tt = (new TermTaxonomy())->getTable();     // term_taxonomies
-        $t = (new Term())->getTable();             // terms
+        $t = (new Term())->getTable();              // terms
 
         return $this->belongsToMany(
             Term::class,
@@ -115,6 +127,7 @@ class Media extends Model
         if (!$s)
             return $query;
         $s = trim($s);
+
         return $query->where(function ($qq) use ($s) {
             $qq->where('filename', 'like', "%{$s}%")
                 ->orWhere('mime', 'like', "%{$s}%")
@@ -127,6 +140,7 @@ class Media extends Model
     public function scopeInCategoryTT($query, int $termTaxonomyId)
     {
         $tr = (new TermRelationship())->getTable();
+
         return $query->whereIn('id', function ($q) use ($tr, $termTaxonomyId) {
             $q->select('object_id')->from($tr)->where('term_taxonomy_id', $termTaxonomyId);
         });

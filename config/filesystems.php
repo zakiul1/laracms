@@ -7,29 +7,25 @@ return [
     | Default Filesystem Disk
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the default filesystem disk that should be used
-    | by the framework. The "local" disk, as well as a variety of cloud
-    | based disks are available to your application for file storage.
+    | Use the "public" disk by default so uploaded media can generate web URLs.
     |
     */
 
-    'default' => env('FILESYSTEM_DISK', 'local'),
+    'default' => env('FILESYSTEM_DISK', 'public'),
 
     /*
     |--------------------------------------------------------------------------
     | Filesystem Disks
     |--------------------------------------------------------------------------
     |
-    | Below you may configure as many filesystem disks as necessary, and you
-    | may even configure multiple disks for the same driver. Examples for
-    | most supported storage drivers are configured here for reference.
-    |
+    | Configure as many filesystem disks as necessary.
     | Supported drivers: "local", "ftp", "sftp", "s3"
     |
     */
 
     'disks' => [
 
+        // Private local storage (not web-accessible)
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
@@ -38,15 +34,17 @@ return [
             'report' => false,
         ],
 
+        // Public storage (web-accessible via /storage symlink)
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
-            'url' => env('APP_URL').'/storage',
+            'url' => env('APP_URL') . '/storage',
             'visibility' => 'public',
             'throw' => false,
             'report' => false,
         ],
 
+        // S3-compatible storage (optional)
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
@@ -67,9 +65,7 @@ return [
     | Symbolic Links
     |--------------------------------------------------------------------------
     |
-    | Here you may configure the symbolic links that will be created when the
-    | `storage:link` Artisan command is executed. The array keys should be
-    | the locations of the links and the values should be their targets.
+    | These links are created when you run `php artisan storage:link`.
     |
     */
 

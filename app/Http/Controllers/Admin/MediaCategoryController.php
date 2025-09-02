@@ -53,10 +53,14 @@ class MediaCategoryController extends Controller
 
         TermTaxonomy::firstOrCreate(
             ['term_id' => $term->id, 'taxonomy' => $this->taxonomy],
-            ['description' => $data['description'] ?? null, 'parent_id' => $data['parent_id'] ?? null]
+            [
+                'description' => $data['description'] ?? null,
+                'parent_id' => $data['parent_id'] ?? null,
+            ]
         );
 
-        return redirect()->route('admin.media.categories.index')->with('status', 'Category created.');
+        return redirect()->route('admin.media.categories.index')
+            ->with('status', 'Category created.');
     }
 
     public function edit(TermTaxonomy $tt)
@@ -66,7 +70,8 @@ class MediaCategoryController extends Controller
         $parents = TermTaxonomy::with('term')
             ->where('taxonomy', $this->taxonomy)
             ->where('id', '!=', $tt->id)
-            ->orderBy('id')->get();
+            ->orderBy('id')
+            ->get();
 
         return view('admin.media.categories.edit', compact('tt', 'parents'));
     }
@@ -83,6 +88,7 @@ class MediaCategoryController extends Controller
         ]);
 
         $slug = $data['slug'] ?? Str::slug($data['name']);
+
         $tt->term->update(['name' => $data['name'], 'slug' => $slug]);
 
         $tt->update([
@@ -90,7 +96,8 @@ class MediaCategoryController extends Controller
             'parent_id' => $data['parent_id'] ?? null,
         ]);
 
-        return redirect()->route('admin.media.categories.index')->with('status', 'Category updated.');
+        return redirect()->route('admin.media.categories.index')
+            ->with('status', 'Category updated.');
     }
 
     public function destroy(TermTaxonomy $tt)
@@ -106,33 +113,50 @@ class MediaCategoryController extends Controller
         return back()->with('status', 'Category deleted.');
     }
 
-    // ----- NEW: JSON for SPA/Alpine -----
+    /** ✅ JSON list for dropdowns (id, name, parent_id) */
     public function json()
     {
-        return TermTaxonomy::with(['term', 'parent.term'])
+        $cats = TermTaxonomy::with('term')
             ->where('taxonomy', $this->taxonomy)
             ->orderBy('parent_id')
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->map(fn($tt) => [
+                'id' => $tt->id,
+                'name' => $tt->term->name ?? '',
+                'parent_id' => $tt->parent_id,
+            ]);
+
+        return response()->json($cats);
     }
 
-    // ----- NEW: quick-create from upload modal -----
-    public function quickCreate(Request $request)
+    /** ✅ Quick AJAX create (returns 201 or 422) */
+    public function quickStore(Request $request)
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
-            'parent_id' => ['nullable', 'integer'],
+            'parent_id' => ['nullable', 'integer', 'exists:term_taxonomies,id'],
         ]);
 
         $slug = Str::slug($data['name']);
 
-        $term = Term::firstOrCreate(['slug' => $slug], ['name' => $data['name']]);
+        $term = Term::firstOrCreate(
+            ['slug' => $slug],
+            ['name' => $data['name']]
+        );
 
         $tt = TermTaxonomy::firstOrCreate(
             ['term_id' => $term->id, 'taxonomy' => $this->taxonomy],
             ['parent_id' => $data['parent_id'] ?? null]
         );
 
-        return response()->json(['status' => 'ok', 'item' => $tt->load(['term', 'parent.term'])]);
+        return response()->json([
+            'status' => 'ok',
+            'item' => [
+                'id' => $tt->id,
+                'name' => $term->name,
+                'parent_id' => $tt->parent_id,
+            ],
+        ], 201);
     }
 }

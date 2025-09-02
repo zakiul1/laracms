@@ -10,7 +10,9 @@ class TermTaxonomy extends Model
 {
     protected $table = 'term_taxonomies';
 
-    // NO 'name' column here — name/slug live on terms
+    // Disable if your table has no created_at/updated_at columns
+    public $timestamps = false;
+
     protected $fillable = [
         'term_id',
         'taxonomy',      // 'category', 'tag', 'media_category', etc.
@@ -18,6 +20,25 @@ class TermTaxonomy extends Model
         'parent_id',
         'count',
     ];
+
+    protected $casts = [
+        'term_id' => 'integer',
+        'parent_id' => 'integer',
+        'count' => 'integer',
+    ];
+
+    // Optional: make name/slug accessible directly on the model
+    protected $appends = ['name', 'slug'];
+
+    public function getNameAttribute(): ?string
+    {
+        return $this->relationLoaded('term') ? ($this->term->name ?? null) : ($this->term()->value('name'));
+    }
+
+    public function getSlugAttribute(): ?string
+    {
+        return $this->relationLoaded('term') ? ($this->term->slug ?? null) : ($this->term()->value('slug'));
+    }
 
     public function term(): BelongsTo
     {

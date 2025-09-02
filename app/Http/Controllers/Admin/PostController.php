@@ -8,6 +8,7 @@ use App\Models\PostMeta;
 use App\Models\PostRevision;
 use App\Models\Taxonomy;
 use App\Models\Term;
+use App\Models\TermTaxonomy;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -15,9 +16,7 @@ use Illuminate\Support\Str;
 
 class PostController extends Controller
 {
-    /**
-     * GET /admin/posts/{type?}
-     */
+    /** GET /admin/posts/{type?} */
     public function index(Request $request, string $type = 'post')
     {
         $items = Post::type($type)->latest()->paginate(15);
@@ -28,26 +27,29 @@ class PostController extends Controller
         ]);
     }
 
-    /**
-     * GET /admin/posts/create/{type?}
-     */
+    /** GET /admin/posts/create/{type?} */
     public function create(string $type = 'post')
     {
-        $categories = Taxonomy::where('slug', 'category')->first();
-        $tagsTax = Taxonomy::where('slug', 'post_tag')->first();
+        // Taxonomy models (if your view shows labels, etc.)
+        $categoryTax = Taxonomy::where('slug', 'category')->first();
+        $tagTax = Taxonomy::where('slug', 'post_tag')->first();
+
+        // Actual selectable terms (via term_taxonomies)
+        $categories = Term::forTaxonomy('category')->orderBy('name')->get();
+        $tags = Term::forTaxonomy('post_tag')->orderBy('name')->get();
 
         return view('admin.posts.create', [
             'type' => $type,
             'post' => new Post(['type' => $type]),
+            'categoryTax' => $categoryTax,
+            'tagTax' => $tagTax,
             'categories' => $categories,
-            'tagsTax' => $tagsTax,
+            'tags' => $tags,
             'mode' => 'create',
         ]);
     }
 
-    /**
-     * POST /admin/posts/{type?}
-     */
+    /** POST /admin/posts/{type?} */
     public function store(Request $request, string $type = 'post')
     {
         $data = $this->validated($request, null, $type);
@@ -62,7 +64,7 @@ class PostController extends Controller
 
             // Taxonomies
             $this->syncCategories($post, $request->input('category_ids', []));
-            $this->syncTags($post, $request->input('tags', ''));
+            $this->syncTags($post, (string) $request->input('tags', ''));
 
             // Featured + gallery
             $post->featured_media_id = $request->input('featured_media_id');
@@ -82,29 +84,29 @@ class PostController extends Controller
         });
     }
 
-    /**
-     * GET /admin/posts/{post}/edit/{type?}
-     * Route order injects $post first, then optional $type.
-     */
+    /** GET /admin/posts/{post}/edit/{type?} */
     public function edit(Post $post, string $type = 'post')
     {
         abort_unless($post->type === $type, 404);
 
-        $categories = Taxonomy::where('slug', 'category')->first();
-        $tagsTax = Taxonomy::where('slug', 'post_tag')->first();
+        $categoryTax = Taxonomy::where('slug', 'category')->first();
+        $tagTax = Taxonomy::where('slug', 'post_tag')->first();
+
+        $categories = Term::forTaxonomy('category')->orderBy('name')->get();
+        $tags = Term::forTaxonomy('post_tag')->orderBy('name')->get();
 
         return view('admin.posts.edit', [
             'type' => $type,
             'post' => $post,
+            'categoryTax' => $categoryTax,
+            'tagTax' => $tagTax,
             'categories' => $categories,
-            'tagsTax' => $tagsTax,
+            'tags' => $tags,
             'mode' => 'edit',
         ]);
     }
 
-    /**
-     * PUT /admin/posts/{post}/{type?}
-     */
+    /** PUT /admin/posts/{post}/{type?} */
     public function update(Request $request, Post $post, string $type = 'post')
     {
         abort_unless($post->type === $type, 404);
@@ -119,7 +121,7 @@ class PostController extends Controller
             $post->save();
 
             $this->syncCategories($post, $request->input('category_ids', []));
-            $this->syncTags($post, $request->input('tags', ''));
+            $this->syncTags($post, (string) $request->input('tags', ''));
 
             $post->featured_media_id = $request->input('featured_media_id');
             $post->save();
@@ -135,9 +137,7 @@ class PostController extends Controller
         });
     }
 
-    /**
-     * DELETE /admin/posts/{post}/{type?}
-     */
+    /** DELETE /admin/posts/{post}/{type?} */
     public function destroy(Post $post, string $type = 'post')
     {
         abort_unless($post->type === $type, 404);
@@ -172,48 +172,58 @@ class PostController extends Controller
         ]);
     }
 
+    /** Replace categories for the post (keep existing tags) */
     protected function syncCategories(Post $post, array $ids): void
     {
-        $catTax = Taxonomy::where('slug', 'category')->first();
-        if (!$catTax)
-            return;
+        // Only keep IDs that are *actually* category terms
+        $termIds = Term::select('terms.id')
+            ->join('term_taxonomies as tt', 'tt.term_id', '=', 'terms.id')
+            ->where('tt.taxonomy', 'category')
+            ->whereIn('terms.id', $ids ?: [])
+            ->pluck('terms.id')
+            ->all();
 
-        $termIds = Term::where('taxonomy_id', $catTax->id)
-            ->whereIn('id', $ids ?: [])
-            ->pluck('id')->all();
-
-        // Keep existing tags while replacing categories
+        // Keep current tags
         $currentTagIds = $post->terms()
-            ->whereHas('taxonomy', fn($q) => $q->where('slug', 'post_tag'))
-            ->pluck('terms.id')->all();
+            ->join('term_taxonomies as tt', 'tt.term_id', '=', 'terms.id')
+            ->where('tt.taxonomy', 'post_tag')
+            ->pluck('terms.id')
+            ->all();
 
         $post->terms()->sync(array_unique(array_merge($termIds, $currentTagIds)));
     }
 
+    /** Replace tags for the post (keep existing categories) */
     protected function syncTags(Post $post, string $csv): void
     {
-        $tax = Taxonomy::where('slug', 'post_tag')->first();
-        if (!$tax)
-            return;
-
         $names = collect(explode(',', $csv))
             ->map(fn($s) => trim($s))
             ->filter()
             ->take(50);
 
         $tagIds = [];
+
         foreach ($names as $name) {
-            $tag = Term::firstOrCreate(
-                ['taxonomy_id' => $tax->id, 'slug' => Str::slug($name)],
-                ['name' => $name]
-            );
-            $tagIds[] = $tag->id;
+            $slug = Str::slug($name);
+
+            // Create/find term
+            $term = Term::firstOrCreate(['slug' => $slug], ['name' => $name]);
+
+            // Ensure it has a 'post_tag' term_taxonomy row
+            TermTaxonomy::firstOrCreate([
+                'term_id' => $term->id,
+                'taxonomy' => 'post_tag',
+            ]);
+
+            $tagIds[] = $term->id;
         }
 
-        // Keep existing categories while replacing tags
+        // Keep current categories
         $currentCatIds = $post->terms()
-            ->whereHas('taxonomy', fn($q) => $q->where('slug', 'category'))
-            ->pluck('terms.id')->all();
+            ->join('term_taxonomies as tt', 'tt.term_id', '=', 'terms.id')
+            ->where('tt.taxonomy', 'category')
+            ->pluck('terms.id')
+            ->all();
 
         $post->terms()->sync(array_unique(array_merge($tagIds, $currentCatIds)));
     }
