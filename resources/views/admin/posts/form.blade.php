@@ -33,13 +33,20 @@
                     @enderror
                 </div>
 
-                {{-- Content (CKEditor 5) --}}
+                {{-- Content (CKEditor 5 + Media Browser) --}}
                 <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                    <div class="flex items-center justify-between">
-                        <label class="block text-sm font-medium mb-1">Content</label>
-                        <span class="text-xs opacity-70">CKEditor 5 (Classic)</span>
+                    <div class="flex items-center justify-between mb-1">
+                        <div class="flex items-center gap-3">
+                            <label class="block text-sm font-medium">Content</label>
+                            <span class="text-xs opacity-70">CKEditor 5 (Classic)</span>
+                        </div>
+                        <button type="button" id="btn-insert-media" class="text-xs px-3 py-1.5 border rounded-radius">
+                            Insert from Media Library
+                        </button>
                     </div>
-                    <textarea id="content" name="content" rows="16">{{ old('content', $post->content) }}</textarea>
+
+                    <textarea id="content" class="js-ckeditor" name="content" rows="16"
+                        data-upload-url="{{ route('admin.ckeditor.upload') }}">{{ old('content', $post->content) }}</textarea>
                     @error('content')
                         <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
                     @enderror
@@ -78,8 +85,7 @@
                         <label class="block text-xs opacity-70">Status</label>
                         <select name="status" class="w-full rounded-radius border px-2 py-1.5">
                             @foreach (['draft', 'published'] as $st)
-                                <option value="{{ $st }}" @selected(old('status', $post->status ?? 'draft') === $st)>
-                                    {{ ucfirst($st) }}
+                                <option value="{{ $st }}" @selected(old('status', $post->status ?? 'draft') === $st)>{{ ucfirst($st) }}
                                 </option>
                             @endforeach
                         </select>
@@ -112,44 +118,16 @@
                     @enderror
                 </div>
 
-                {{-- Featured & Gallery UI (kept as-is; JS uploads are optional) --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-3"
-                    x-data="imageBox()">
-                    <h3 class="font-semibold text-sm">Featured Image & Gallery</h3>
+                {{-- Featured Image (single) --}}
+                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
+                    <h3 class="font-semibold text-sm">Featured Image</h3>
+                    <x-media-picker name="featured_media_id" :multiple="false" :value="old('featured_media_id', $post->featured_media_id ?? null)" />
+                </div>
 
-                    <div class="space-y-2">
-                        <label class="block text-xs opacity-70 mb-1">Featured image</label>
-                        <input type="file" accept="image/*" @change="previewFeatured($event)"
-                            class="block w-full text-sm">
-                        <div class="mt-2" x-show="featuredPreview">
-                            <img :src="featuredPreview" class="w-24 h-24 object-cover rounded-md border" alt="">
-                        </div>
-                        <input type="hidden" name="featured_media_id" x-model="featuredId">
-                        <button type="button" class="mt-2 px-2 py-1.5 border rounded-radius text-sm"
-                            @click="uploadFeatured()">Upload featured</button>
-                    </div>
-
-                    <hr class="my-2 border-outline dark:border-outline-dark">
-
-                    <div class="space-y-2">
-                        <label class="block text-xs opacity-70 mb-1">Gallery (multiple)</label>
-                        <input type="file" accept="image/*" multiple @change="previewGallery($event)"
-                            class="block w-full text-sm">
-                        <div class="flex flex-wrap gap-2 mt-2">
-                            <template x-for="(src,i) in galleryPreviews" :key="i">
-                                <img :src="src" class="w-16 h-16 object-cover rounded-md border">
-                            </template>
-                        </div>
-
-                        <div class="mt-2">
-                            <button type="button" class="px-2 py-1.5 border rounded-radius text-sm"
-                                @click="uploadGallery()">Upload gallery</button>
-                        </div>
-
-                        <template x-for="id in galleryIds" :key="id">
-                            <input type="hidden" name="gallery_ids[]" :value="id">
-                        </template>
-                    </div>
+                {{-- Gallery (multiple) --}}
+                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
+                    <h3 class="font-semibold text-sm">Gallery</h3>
+                    <x-media-picker name="gallery_ids" :multiple="true" :value="old('gallery_ids', [])" />
                 </div>
 
                 {{-- Categories --}}
@@ -201,73 +179,77 @@
         </div>
     </form>
 
-    {{-- CKEditor 5 Classic (CDN) --}}
-    <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
+    {{-- Minimal inline glue: binds Media Browser to the CKEditor instance (no backticks) --}}
     <script>
-        ClassicEditor
-            .create(document.querySelector('#content'), {
-                toolbar: {
-                    items: [
-                        'undo', 'redo', '|',
-                        'heading', '|',
-                        'bold', 'italic', 'underline', 'link', '|',
-                        'bulletedList', 'numberedList', 'blockQuote', '|',
-                        'insertTable', 'imageUpload', 'mediaEmbed', '|',
-                        'codeBlock'
-                    ]
-                },
-                heading: {
-                    options: [{
-                            model: 'paragraph',
-                            title: 'Paragraph',
-                            class: 'ck-heading_paragraph'
-                        },
-                        {
-                            model: 'heading2',
-                            view: 'h2',
-                            title: 'Heading 2',
-                            class: 'ck-heading_heading2'
-                        },
-                        {
-                            model: 'heading3',
-                            view: 'h3',
-                            title: 'Heading 3',
-                            class: 'ck-heading_heading3'
-                        },
-                        {
-                            model: 'heading4',
-                            view: 'h4',
-                            title: 'Heading 4',
-                            class: 'ck-heading_heading4'
-                        },
-                    ]
-                },
-                mediaEmbed: {
-                    previewsInData: true
-                },
-                simpleUpload: {
-                    uploadUrl: "{{ route('admin.ckeditor.upload') }}",
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+        (function() {
+            function bindInsert(editor) {
+                var btn = document.getElementById('btn-insert-media');
+                if (!btn) return;
+
+                btn.addEventListener('click', async function() {
+                    if (typeof window.openMediaBrowser !== 'function') {
+                        alert(
+                            'Media Browser is not loaded. Make sure <x-media-browser /> is included in the layout.'
+                            );
+                        return;
                     }
-                }
-            })
-            .catch(console.error);
-    </script>
 
-    {{-- Slug auto from title --}}
-    <script>
-        document.getElementById('title')?.addEventListener('input', function() {
-            const slugEl = document.getElementById('slug');
-            if (!slugEl) return;
-            if (slugEl.value.trim().length) return; // don't overwrite manual edits
-            slugEl.value = this.value.toLowerCase()
-                .replace(/[^a-z0-9\s-]/g, '')
-                .replace(/\s+/g, '-')
-                .replace(/-+/g, '-')
-                .substring(0, 96);
-        });
-    </script>
+                    var files = await window.openMediaBrowser({
+                        multiple: true
+                    });
+                    if (!files || !files.length) return;
 
-    {{-- Your imageBox() Alpine helper can stay as-is (optional uploads UI) --}}
+                    editor.model.change(function(writer) {
+                        files.forEach(function(file) {
+                            var mime = (file.mime || '').toLowerCase();
+                            var isImage = mime.indexOf('image/') === 0;
+
+                            if (isImage) {
+                                var img = writer.createElement('imageBlock', {
+                                    src: file.url,
+                                    alt: file.alt || file.title || ''
+                                });
+                                editor.model.insertContent(img, editor.model.document
+                                    .selection);
+                            } else {
+                                var html = '<p><a href="' + file.url +
+                                    '" target="_blank" rel="noopener">' +
+                                    (file.filename || file.url) +
+                                    '</a></p>';
+                                var viewFrag = editor.data.processor.toView(html);
+                                var modelFrag = editor.data.toModel(viewFrag);
+                                editor.model.insertContent(modelFrag, editor.model.document
+                                    .selection);
+                            }
+                        });
+                    });
+                });
+            }
+
+            // Bind when your CKEditor boot file dispatches the ready event
+            window.addEventListener('ckeditor:ready', function(e) {
+                if (e && e.detail && e.detail.editor) bindInsert(e.detail.editor);
+            });
+
+            // Fallback if the editor was already created before this script
+            var el = document.getElementById('content');
+            if (el && el.__editor) bindInsert(el.__editor);
+
+            // Slug auto from title (only when slug is empty)
+            var titleEl = document.getElementById('title');
+            if (titleEl) {
+                titleEl.addEventListener('input', function() {
+                    var slugEl = document.getElementById('slug');
+                    if (!slugEl) return;
+                    if (slugEl.value && slugEl.value.trim().length) return;
+                    var v = this.value.toLowerCase()
+                        .replace(/[^a-z0-9\s-]/g, '')
+                        .replace(/\s+/g, '-')
+                        .replace(/-+/g, '-')
+                        .substring(0, 96);
+                    slugEl.value = v;
+                });
+            }
+        })();
+    </script>
 @endsection

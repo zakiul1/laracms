@@ -125,4 +125,13 @@ if (!function_exists('lucide_icon')) {
         // Last-resort invisible span to avoid errors
         return '<span class="' . e($class) . '" aria-hidden="true"></span>';
     }
+
+
+    if (!function_exists('render_menu')) {
+        function render_menu(string $location, array $options = []): string
+        {
+            return app(\App\Services\MenuService::class)->render($location, $options);
+        }
+    }
+
 }

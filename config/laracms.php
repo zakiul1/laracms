@@ -23,5 +23,10 @@ return [
         'enqueue_admin_footer',
         'theme_head',
         'theme_footer',
+        // ✅ needed so modules can inject admin sidebar items
+        'admin_menu',
     ],
+
+    // ✅ Force-boot these module slugs (first-party, protected)
+    'autoload_modules' => ['posts', 'media'],
 ];

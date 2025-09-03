@@ -18,8 +18,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             \Database\Seeders\SiteSettingSeeder::class,
             \Database\Seeders\AdminUserSeeder::class,
-            \Database\Seeders\MenuSeeder::class,
-            \Database\Seeders\ModuleSeeder::class,
+
         ]);
     }
 }

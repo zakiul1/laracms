@@ -1,0 +1,7 @@
+{
+  "name": "Posts",
+  "slug": "posts",
+  "version": "1.0.0",
+  "protected": true,
+  "provider": "\\Modules\\Posts\\PostsServiceProvider"
+}

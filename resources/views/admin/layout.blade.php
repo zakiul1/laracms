@@ -18,11 +18,24 @@
 
 <body class="h-full bg-white dark:bg-neutral-950 text-on-surface dark:text-on-surface-dark antialiased">
     @php
-        /** @var \App\Support\Cms\AdminMenuRegistry $menu */
-        $menu = app(\App\Support\Cms\AdminMenuRegistry::class);
-        function_exists('do_action') && do_action('admin_menu', $menu);
-        $menuItems = $menu->list();
+        /**
+         * Prefer menu from a view composer (shared as $adminMenu).
+         * Fallback: build it locally once so nothing breaks.
+         */
+        /** @var array|null $adminMenu */
+        $menuItems = $adminMenu ?? null;
 
+        if ($menuItems === null) {
+            /** @var \App\Support\Cms\AdminMenuRegistry $menu */
+            $menu = app(\App\Support\Cms\AdminMenuRegistry::class);
+            if (method_exists($menu, 'seedBaseline')) {
+                $menu->seedBaseline();
+            }
+            function_exists('do_action') && do_action('admin_menu', $menu);
+            $menuItems = $menu->list();
+        }
+
+        // Active-state helpers
         $isUrlActive = function (?string $url): bool {
             if (!$url) {
                 return false;
@@ -47,9 +60,10 @@
         <div x-cloak x-show="showSidebar" class="fixed inset-0 z-10 bg-surface-dark/10 backdrop-blur-xs md:hidden"
             aria-hidden="true" @click="showSidebar=false" x-transition.opacity></div>
 
-        <!-- SIDEBAR (no x-cloak here) -->
+        <!-- SIDEBAR -->
         <nav class="fixed left-0 z-20 flex h-svh w-60 shrink-0 flex-col border-r border-outline bg-surface-alt p-4
-               transition-transform duration-300 md:w-64 md:translate-x-0 md:relative dark:border-outline-dark dark:bg-surface-dark-alt"
+               transition-transform duration-300 md:w-64 md:translate-x-0 md:relative
+               dark:border-outline-dark dark:bg-surface-dark-alt"
             :class="showSidebar ? 'translate-x-0' : '-translate-x-60'" aria-label="sidebar navigation">
 
             <!-- Logo -->
@@ -69,16 +83,14 @@
                 </svg>
                 <input type="search"
                     class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 pl-9 text-sm
-                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
-                              disabled:cursor-not-allowed disabled:opacity-75 dark:border-outline-dark
-                              dark:bg-surface-dark/50 dark:focus-visible:outline-primary-dark"
+                          focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
+                          disabled:cursor-not-allowed disabled:opacity-75 dark:border-outline-dark
+                          dark:bg-surface-dark/50 dark:focus-visible:outline-primary-dark"
                     name="search" aria-label="Search" placeholder="Search" />
             </div>
 
-            <!-- MENU -->
+            <!-- MENU (fully dynamic via admin_menu hook) -->
             <div class="flex flex-col gap-2 overflow-y-auto pb-6">
-
-                {{-- Items from registry --}}
                 @foreach ($menuItems as $i => $item)
                     @php
                         $label = $item['label'] ?? 'Item';
@@ -93,9 +105,9 @@
                         <!-- Top-level link (icon allowed) -->
                         <a href="{{ $url }}"
                             class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm font-medium underline-offset-2 focus-visible:underline focus:outline-hidden
-                           {{ $isActive
-                               ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                               : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
+                              {{ $isActive
+                                  ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                  : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                             @if ($icon)
                                 <x-ui.icon :name="$icon" class="size-5 shrink-0" aria-hidden="true" />
                             @endif
@@ -109,9 +121,9 @@
                                 id="grp-{{ $i }}-btn" aria-controls="grp-{{ $i }}"
                                 :aria-expanded="isExpanded ? 'true' : 'false'"
                                 class="flex items-center justify-between rounded-radius gap-2 px-2 py-1.5 text-sm font-medium underline-offset-2 focus:outline-hidden focus-visible:underline
-                                {{ $isActive
-                                    ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                    : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
+                                       {{ $isActive
+                                           ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                           : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                                 @if ($icon)
                                     <x-ui.icon :name="$icon" class="size-5 shrink-0" aria-hidden="true" />
                                 @endif
@@ -140,10 +152,9 @@
                                     <li class="px-1 py-0.5 first:mt-2">
                                         <a href="{{ $cUrl }}"
                                             class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm underline-offset-2 focus:outline-hidden focus-visible:underline
-                                           {{ $cActive
-                                               ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                               : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
-                                            <!-- no submenu icon -->
+                                              {{ $cActive
+                                                  ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                                  : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                                             <span>{{ $cLabel }}</span>
                                         </a>
                                     </li>
@@ -152,57 +163,6 @@
                         </div>
                     @endif
                 @endforeach
-
-                {{-- Static: Media group (same animated pattern) --}}
-                @php
-                    $mediaGroupActive =
-                        request()->routeIs('admin.media.*') || request()->routeIs('admin.media.categories.*');
-                @endphp
-                <div x-data="{ isExpanded: {{ $mediaGroupActive ? 'true' : 'false' }}, h: 0 }" x-init="$nextTick(() => { h = isExpanded ? ($refs.mediaList?.scrollHeight || 0) : 0 })" class="flex flex-col mt-2">
-                    <button type="button"
-                        @click="isExpanded = !isExpanded; $nextTick(() => { h = isExpanded ? ($refs.mediaList?.scrollHeight || 0) : 0 })"
-                        id="grp-media-btn" aria-controls="grp-media" :aria-expanded="isExpanded ? 'true' : 'false'"
-                        class="flex items-center justify-between rounded-radius gap-2 px-2 py-1.5 text-sm font-medium underline-offset-2 focus:outline-hidden focus-visible:underline
-                        {{ $mediaGroupActive
-                            ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                            : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
-                        <x-ui.icon name="lucide-images" class="size-5 shrink-0" aria-hidden="true" />
-                        <span class="mr-auto text-left">Media</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-                            class="size-5 transition-transform rotate-0 shrink-0"
-                            :class="isExpanded ? 'rotate-180' : 'rotate-0'" aria-hidden="true">
-                            <path fill-rule="evenodd"
-                                d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
-                        </svg>
-                    </button>
-
-                    <ul x-cloak x-ref="mediaList" x-show="isExpanded" x-transition.opacity
-                        :style="isExpanded
-                            ?
-                            'max-height:' + h + 'px; overflow:hidden; transition:max-height .3s ease;' :
-                            'max-height:0; overflow:hidden; transition:max-height .3s ease;'"
-                        aria-labelledby="grp-media-btn" id="grp-media">
-                        <li class="px-1 py-0.5 first:mt-2">
-                            <a href="{{ route('admin.media.index') }}"
-                                class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm underline-offset-2 focus:outline-hidden focus-visible:underline
-                               {{ request()->routeIs('admin.media.index')
-                                   ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                   : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
-                                <span>Library</span>
-                            </a>
-                        </li>
-                        <li class="px-1 py-0.5">
-                            <a href="{{ route('admin.media.categories.index') }}"
-                                class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm underline-offset-2 focus:outline-hidden focus-visible:underline
-                               {{ request()->routeIs('admin.media.categories.*')
-                                   ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                   : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
-                                <span>Categories</span>
-                            </a>
-                        </li>
-                    </ul>
-                </div>
-
             </div>
         </nav>
 

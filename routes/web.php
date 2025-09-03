@@ -8,6 +8,12 @@ use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\EditorUploadController;
 use App\Http\Controllers\Admin\MediaController;
 use App\Http\Controllers\Admin\MediaCategoryController;
+// Plugin Manager
+use App\Http\Controllers\Admin\PluginController;
+// ⬇️ NEW: Menus module controllers
+use App\Http\Controllers\Admin\MenuController;
+use App\Http\Controllers\Admin\MenuItemController;
+use App\Http\Controllers\Admin\MenuLocationController;
 
 Route::get('/', fn() => view('welcome'))->name('home');
 
@@ -66,14 +72,22 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         Route::patch('/meta/{media}', [MediaController::class, 'updateMeta'])->name('meta');
         Route::patch('/move/{media}', [MediaController::class, 'moveCategory'])->name('move');
         Route::post('/replace/{media}', [MediaController::class, 'replaceFile'])->name('replace');
+
+        // ✅ NEW: detail JSON for sidebar in Media Browser
+        Route::get('/show/{media}', [MediaController::class, 'show'])->name('show');
+
         Route::delete('/{media}', [MediaController::class, 'destroy'])->name('destroy');
+
+        // ✅ NEW (optional): friendly alias for permanent delete used by the modal
+        Route::delete('/delete/{media}', [MediaController::class, 'destroy'])->name('delete');
+
         Route::post('/restore/{id}', [MediaController::class, 'restore'])->name('restore');
         Route::delete('/force/{id}', [MediaController::class, 'forceDelete'])->name('force');
 
-        // ✅ NEW: bulk actions for Media Library
-        Route::post('/bulk-delete', [MediaController::class, 'bulkDelete'])->name('bulk-delete');        // soft delete (to trash)
-        Route::post('/bulk-restore', [MediaController::class, 'bulkRestore'])->name('bulk-restore');      // restore from trash
-        Route::post('/bulk-force-delete', [MediaController::class, 'bulkForceDelete'])->name('bulk-force');    // permanent delete
+        // Bulk actions
+        Route::post('/bulk-delete', [MediaController::class, 'bulkDelete'])->name('bulk-delete');
+        Route::post('/bulk-restore', [MediaController::class, 'bulkRestore'])->name('bulk-restore');
+        Route::post('/bulk-force-delete', [MediaController::class, 'bulkForceDelete'])->name('bulk-force');
 
         Route::prefix('categories')->name('categories.')->group(function () {
             Route::get('/', [MediaCategoryController::class, 'index'])->name('index');
@@ -88,6 +102,62 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
             Route::post('/quick', [MediaCategoryController::class, 'quickStore'])->name('quick');
             Route::post('/quick-create', [MediaCategoryController::class, 'quickStore']); // alias
         });
+    });
+
+    // =========================
+    // Plugin Manager
+    // =========================
+    Route::prefix('plugins')->name('plugins.')->group(function () {
+        Route::get('/', [PluginController::class, 'index'])->name('index');
+        Route::post('/sync', [PluginController::class, 'sync'])->name('sync');
+
+        // Upload & install
+        Route::get('/upload', fn() => view('admin.plugins.upload'))->name('upload.form');
+        Route::post('/upload', [PluginController::class, 'upload'])->name('upload');
+
+        // Activate / Deactivate
+        Route::post('/{plugin}/activate', [PluginController::class, 'activate'])->name('activate');
+        Route::post('/{plugin}/deactivate', [PluginController::class, 'deactivate'])->name('deactivate');
+
+        // Update
+        Route::post('/{plugin}/update/upload', [PluginController::class, 'updateUpload'])->name('update.upload');
+        Route::post('/{plugin}/update/remote', [PluginController::class, 'updateRemote'])->name('update.remote');
+
+        // Settings
+        Route::get('/{plugin}/settings', [PluginController::class, 'settings'])->name('settings');
+        Route::post('/{plugin}/settings', [PluginController::class, 'saveSettings'])->name('settings.save');
+
+        // Export / Delete
+        Route::get('/{plugin}/export', [PluginController::class, 'export'])->name('export');
+        Route::delete('/{plugin}', [PluginController::class, 'destroy'])->name('destroy');
+    });
+
+    // =========================
+    // Menus (NEW)
+    // =========================
+    Route::prefix('menus')->name('menus.')->group(function () {
+        // Menus CRUD
+        Route::get('/', [MenuController::class, 'index'])->name('index');
+        Route::post('/', [MenuController::class, 'store'])->name('store');
+        Route::get('/{menu}/edit', [MenuController::class, 'edit'])->name('edit');
+        Route::patch('/{menu}', [MenuController::class, 'update'])->name('update');
+        Route::delete('/{menu}', [MenuController::class, 'destroy'])->name('destroy');
+
+        // Drag & drop reorder (nested tree JSON)
+        Route::post('/{menu}/reorder', [MenuController::class, 'reorder'])->name('reorder');
+
+        // Menu items
+        Route::post('/{menu}/items/custom', [MenuItemController::class, 'storeCustom'])->name('items.custom.store');
+        Route::post('/{menu}/items/bulk', [MenuItemController::class, 'storeBulk'])->name('items.bulk.store');
+        Route::patch('/{menu}/items/{item}', [MenuItemController::class, 'update'])->name('items.update');
+        Route::delete('/{menu}/items/{item}', [MenuItemController::class, 'destroy'])->name('items.destroy');
+
+        // Assign locations from the menu edit screen
+        Route::post('/{menu}/assign-locations', [MenuController::class, 'assignLocations'])->name('assign');
+
+        // Locations screen
+        Route::get('/locations', [MenuLocationController::class, 'index'])->name('locations.index');
+        Route::post('/locations', [MenuLocationController::class, 'update'])->name('locations.update');
     });
 });
 
