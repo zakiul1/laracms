@@ -1,255 +1,270 @@
-@extends('admin.layout', ['title' => $mode === 'create' ? 'New Post' : 'Edit Post'])
+@php
+    $isPage = $type === 'page';
+    $saveRoute = $post->exists
+        ? route($isPage ? 'admin.pages.update' : 'admin.posts.update', $post)
+        : route($isPage ? 'admin.pages.store' : 'admin.posts.store');
+@endphp
 
-@section('content')
-    <form method="POST" action="{{ $mode === 'create' ? route('admin.posts.store') : route('admin.posts.update', $post) }}"
-        enctype="multipart/form-data">
-        @csrf
-        @if ($mode === 'edit')
-            @method('PATCH')
+<form x-data="{ action: 'save' }" method="POST" action="{{ $saveRoute }}" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    @csrf
+    @if ($post->exists)
+        @method('PATCH')
+    @endif
+
+    <input type="hidden" name="action" :value="action">
+
+    {{-- LEFT: Editor & SEO --}}
+    <div class="lg:col-span-2 space-y-4">
+        {{-- Title --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <label class="block text-sm mb-1">Title</label>
+            <input type="text" name="title" value="{{ old('title', $post->title) }}" required
+                class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
+            @error('title')
+                <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Permalink / Slug --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <label class="block text-sm mb-1">Permalink</label>
+            <div class="flex items-center gap-2">
+                <span class="text-xs opacity-70">{{ url('/') }}/</span>
+                <input type="text" name="slug" value="{{ old('slug', $post->slug) }}"
+                    class="flex-1 border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">
+            </div>
+            @error('slug')
+                <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Content --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <label class="block text-sm mb-1">Content</label>
+            <textarea name="content" rows="14"
+                class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50 editor">{{ old('content', $post->content) }}</textarea>
+            @error('content')
+                <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Excerpt --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <label class="block text-sm mb-1">Excerpt / Summary</label>
+            <textarea name="excerpt" rows="3"
+                class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">{{ old('excerpt', $post->excerpt) }}</textarea>
+            @error('excerpt')
+                <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Template (Pages only) --}}
+        @if ($isPage)
+            <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+                <label class="block text-sm mb-1">Template</label>
+                <select name="template"
+                    class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
+                    <option value="">Default</option>
+                    @foreach ($templates ?? [] as $value => $label)
+                        <option value="{{ $value }}" @selected(old('template', $post->template) === $value)>{{ $label }}</option>
+                    @endforeach
+                </select>
+                @error('template')
+                    <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
+                @enderror
+            </div>
         @endif
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {{-- MAIN --}}
-            <div class="lg:col-span-2 space-y-4">
+        {{-- SEO Settings --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <h3 class="font-semibold mb-2">SEO Settings</h3>
+            @php $seo = old('seo', optional($post->seo)->toArray() ?? []); @endphp
 
-                {{-- Title --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                    <label class="block text-sm font-medium mb-1">Title</label>
-                    <input id="title" name="title" type="text" class="w-full rounded-radius border px-3 py-2"
-                        value="{{ old('title', $post->title) }}" required>
-                    @error('title')
-                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                    @enderror
+            {{-- Row: Meta Title & Meta Keywords (2 cols) --}}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs mb-1">Meta Title</label>
+                    <input name="seo[meta_title]" value="{{ $seo['meta_title'] ?? '' }}"
+                        class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">
                 </div>
-
-                {{-- Slug --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                    <label class="block text-sm font-medium mb-1">Slug (permalink)</label>
-                    <input id="slug" name="slug" type="text" class="w-full rounded-radius border px-3 py-2"
-                        placeholder="auto-from-title if empty" value="{{ old('slug', $post->slug) }}">
-                    <p class="text-xs opacity-70 mt-1">Auto-generated from Title if left empty.</p>
-                    @error('slug')
-                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                    @enderror
+                <div>
+                    <label class="block text-xs mb-1">Meta Keywords</label>
+                    <input name="seo[meta_keywords]" value="{{ $seo['meta_keywords'] ?? '' }}"
+                        class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">
                 </div>
-
-                {{-- Content (CKEditor 5 + Media Browser) --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                    <div class="flex items-center justify-between mb-1">
-                        <div class="flex items-center gap-3">
-                            <label class="block text-sm font-medium">Content</label>
-                            <span class="text-xs opacity-70">CKEditor 5 (Classic)</span>
-                        </div>
-                        <button type="button" id="btn-insert-media" class="text-xs px-3 py-1.5 border rounded-radius">
-                            Insert from Media Library
-                        </button>
-                    </div>
-
-                    <textarea id="content" class="js-ckeditor" name="content" rows="16"
-                        data-upload-url="{{ route('admin.ckeditor.upload') }}">{{ old('content', $post->content) }}</textarea>
-                    @error('content')
-                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                    @enderror
-                </div>
-
-                {{-- Excerpt --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                    <label class="block text-sm font-medium mb-1">Excerpt</label>
-                    <textarea name="excerpt" rows="3" class="w-full rounded-radius border px-3 py-2">{{ old('excerpt', $post->excerpt) }}</textarea>
-                    @error('excerpt')
-                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                    @enderror
-                </div>
-
-                {{-- Revisions --}}
-                @if ($mode === 'edit' && $post->revisions()->exists())
-                    <div class="rounded-radius border border-outline dark:border-outline-dark p-4">
-                        <h3 class="font-semibold mb-2 text-sm">Revisions</h3>
-                        <ul class="text-xs space-y-1">
-                            @foreach ($post->revisions()->latest()->limit(10)->get() as $rev)
-                                <li>{{ $rev->created_at->format('Y-m-d H:i') }} by #{{ $rev->user_id ?? 'system' }}</li>
-                            @endforeach
-                        </ul>
-                    </div>
-                @endif
             </div>
 
-            {{-- SIDEBAR --}}
-            <div class="space-y-4">
+            {{-- Row: Meta Description --}}
+            <div class="mt-3">
+                <label class="block text-xs mb-1">Meta Description</label>
+                <textarea name="seo[meta_description]" rows="3"
+                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">{{ $seo['meta_description'] ?? '' }}</textarea>
+            </div>
 
-                {{-- Publish --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-3">
-                    <h3 class="font-semibold text-sm">Publish</h3>
-
-                    <div>
-                        <label class="block text-xs opacity-70">Status</label>
-                        <select name="status" class="w-full rounded-radius border px-2 py-1.5">
-                            @foreach (['draft', 'published'] as $st)
-                                <option value="{{ $st }}" @selected(old('status', $post->status ?? 'draft') === $st)>{{ ucfirst($st) }}
-                                </option>
-                            @endforeach
-                        </select>
-                        @error('status')
-                            <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                        @enderror
-                    </div>
-
-                    <div>
-                        <label class="block text-xs opacity-70">Publish at</label>
-                        <input type="datetime-local" name="published_at" class="w-full rounded-radius border px-2 py-1.5"
-                            value="{{ old('published_at', optional($post->published_at)->format('Y-m-d\TH:i')) }}">
-                        @error('published_at')
-                            <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                        @enderror
-                    </div>
-                </div>
-
-                {{-- Author --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-3">
-                    <h3 class="font-semibold text-sm">Author</h3>
-                    <select name="author_id" class="w-full rounded-radius border px-2 py-1.5">
-                        <option value="">(current)</option>
-                        @foreach (\App\Models\User::orderBy('name')->limit(200)->get() as $u)
-                            <option value="{{ $u->id }}" @selected(old('author_id', $post->author_id) === $u->id)>{{ $u->name }}</option>
-                        @endforeach
-                    </select>
-                    @error('author_id')
-                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
-                    @enderror
-                </div>
-
-                {{-- Featured Image (single) --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
-                    <h3 class="font-semibold text-sm">Featured Image</h3>
-                    <x-media-picker name="featured_media_id" :multiple="false" :value="old('featured_media_id', $post->featured_media_id ?? null)" />
-                </div>
-
-                {{-- Gallery (multiple) --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
-                    <h3 class="font-semibold text-sm">Gallery</h3>
-                    <x-media-picker name="gallery_ids" :multiple="true" :value="old('gallery_ids', [])" />
-                </div>
-
-                {{-- Categories --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
-                    <h3 class="font-semibold text-sm">Categories</h3>
-                    @php
-                        $catTax = \App\Models\Taxonomy::where('slug', 'category')->first();
-                        $selectedCats = old(
-                            'category_ids',
-                            $post
-                                ->terms()
-                                ->whereHas('taxonomy', fn($q) => $q->where('slug', 'category'))
-                                ->pluck('terms.id')
-                                ->toArray(),
-                        );
-                    @endphp
-                    <div class="max-h-48 overflow-y-auto space-y-1">
-                        @if ($catTax)
-                            @foreach ($catTax->terms()->orderBy('name')->get() as $term)
-                                <label class="flex items-center gap-2 text-sm">
-                                    <input type="checkbox" name="category_ids[]" value="{{ $term->id }}"
-                                        @checked(in_array($term->id, $selectedCats))>
-                                    <span>{{ $term->name }}</span>
-                                </label>
-                            @endforeach
-                        @else
-                            <p class="text-xs opacity-70">
-                                No categories yet.
-                                <a class="underline" href="{{ route('admin.categories.index') }}">Create one</a>.
-                            </p>
-                        @endif
-                    </div>
-                </div>
-
-                {{-- Tags --}}
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-4 space-y-2">
-                    <h3 class="font-semibold text-sm">Tags</h3>
-                    <input name="tags" type="text" class="w-full rounded-radius border px-2 py-1.5"
-                        placeholder="comma,separated,tags"
-                        value="{{ old('tags', $post->terms()->whereHas('taxonomy', fn($q) => $q->where('slug', 'post_tag'))->pluck('name')->implode(', ')) }}">
-                </div>
-
-                <div class="flex justify-end">
-                    <button class="px-4 py-2 bg-primary text-white rounded-radius">
-                        {{ $mode === 'create' ? 'Create' : 'Update' }}
-                    </button>
+            {{-- Row: Robots --}}
+            <div class="mt-3">
+                <label class="block text-xs mb-1">Robots</label>
+                <div class="flex items-center gap-4">
+                    <label class="inline-flex items-center gap-2 text-xs">
+                        <input type="checkbox" name="seo[robots_index]" value="1" @checked($seo['robots_index'] ?? true)>
+                        Index
+                    </label>
+                    <label class="inline-flex items-center gap-2 text-xs">
+                        <input type="checkbox" name="seo[robots_follow]" value="1" @checked($seo['robots_follow'] ?? true)>
+                        Follow
+                    </label>
                 </div>
             </div>
         </div>
-    </form>
+    </div>
 
-    {{-- Minimal inline glue: binds Media Browser to the CKEditor instance (no backticks) --}}
-    <script>
-        (function() {
-            function bindInsert(editor) {
-                var btn = document.getElementById('btn-insert-media');
-                if (!btn) return;
+    {{-- RIGHT: Sidebar panels --}}
+    <aside class="space-y-4">
+        {{-- Publish --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <h3 class="font-semibold mb-2">Publish</h3>
 
-                btn.addEventListener('click', async function() {
-                    if (typeof window.openMediaBrowser !== 'function') {
-                        alert(
-                            'Media Browser is not loaded. Make sure <x-media-browser /> is included in the layout.'
-                            );
-                        return;
-                    }
+            <div class="grid grid-cols-1 gap-3">
+                <div>
+                    <label class="block text-xs mb-1">Status</label>
+                    <select name="status"
+                        class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
+                        <option value="draft" @selected(old('status', $post->status) === 'draft')>Draft</option>
+                        <option value="published" @selected(old('status', $post->status) === 'published')>Published</option>
+                    </select>
+                </div>
 
-                    var files = await window.openMediaBrowser({
-                        multiple: true
-                    });
-                    if (!files || !files.length) return;
+                {{-- Visibility + password toggle --}}
+                <div x-data="{ v: '{{ old('visibility', $post->visibility) }}' }">
+                    <label class="block text-xs mb-1">Visibility</label>
+                    <select name="visibility" x-model="v"
+                        class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
+                        <option value="public">Public</option>
+                        <option value="private">Private</option>
+                        <option value="password">Password</option>
+                    </select>
 
-                    editor.model.change(function(writer) {
-                        files.forEach(function(file) {
-                            var mime = (file.mime || '').toLowerCase();
-                            var isImage = mime.indexOf('image/') === 0;
+                    <div class="mt-2" x-cloak x-show="v === 'password'">
+                        <label class="block text-xs mb-1">Password</label>
+                        <input type="text" name="password" value="{{ old('password', $post->password) }}"
+                            class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">
+                    </div>
+                </div>
+            </div>
 
-                            if (isImage) {
-                                var img = writer.createElement('imageBlock', {
-                                    src: file.url,
-                                    alt: file.alt || file.title || ''
-                                });
-                                editor.model.insertContent(img, editor.model.document
-                                    .selection);
-                            } else {
-                                var html = '<p><a href="' + file.url +
-                                    '" target="_blank" rel="noopener">' +
-                                    (file.filename || file.url) +
-                                    '</a></p>';
-                                var viewFrag = editor.data.processor.toView(html);
-                                var modelFrag = editor.data.toModel(viewFrag);
-                                editor.model.insertContent(modelFrag, editor.model.document
-                                    .selection);
-                            }
-                        });
-                    });
-                });
-            }
+            <div class="flex items-center gap-2 mt-3">
+                <button type="submit" @click="action='save'"
+                    class="px-3 py-1.5 rounded-radius bg-surface-alt border border-outline text-sm hover:bg-surface dark:bg-surface-dark-alt dark:border-outline-dark">
+                    Save Draft
+                </button>
+                <button type="submit" @click="action='publish'"
+                    class="px-3 py-1.5 rounded-radius bg-primary text-white text-sm">
+                    Publish
+                </button>
+            </div>
+        </div>
 
-            // Bind when your CKEditor boot file dispatches the ready event
-            window.addEventListener('ckeditor:ready', function(e) {
-                if (e && e.detail && e.detail.editor) bindInsert(e.detail.editor);
-            });
+        {{-- Featured Images (multiple via your component) --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            {{--   <h3 class="font-semibold mb-2">Featured Images</h3> --}}
+            <x-media-picker name="gallery" :multiple="true" :value="old('gallery', $post->gallery->pluck('id')->all())" />
+        </div>
 
-            // Fallback if the editor was already created before this script
-            var el = document.getElementById('content');
-            if (el && el.__editor) bindInsert(el.__editor);
+        {{-- Categories (POSTS only) --}}
+        @unless ($isPage)
+            <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+                <h3 class="font-semibold mb-2">Categories</h3>
+                @php
+                    $selectedCats = collect(old('categories', $selectedCategoryIds ?? []))
+                        ->map(fn($v) => (int) $v)
+                        ->all();
+                @endphp
+                <div class="max-h-48 overflow-auto space-y-1">
+                    @foreach ($categoriesTree ?? [] as $cat)
+                        <label class="flex items-center gap-2 text-sm">
+                            <input type="checkbox" name="categories[]" value="{{ $cat['id'] }}"
+                                @checked(in_array($cat['id'], $selectedCats, true))>
+                            <span style="padding-left: {{ $cat['depth'] * 12 }}px">{{ $cat['name'] }}</span>
+                        </label>
+                    @endforeach
+                </div>
 
-            // Slug auto from title (only when slug is empty)
-            var titleEl = document.getElementById('title');
-            if (titleEl) {
-                titleEl.addEventListener('input', function() {
-                    var slugEl = document.getElementById('slug');
-                    if (!slugEl) return;
-                    if (slugEl.value && slugEl.value.trim().length) return;
-                    var v = this.value.toLowerCase()
-                        .replace(/[^a-z0-9\s-]/g, '')
-                        .replace(/\s+/g, '-')
-                        .replace(/-+/g, '-')
-                        .substring(0, 96);
-                    slugEl.value = v;
-                });
-            }
-        })();
-    </script>
-@endsection
+                {{-- Quick add with Parent selector --}}
+                {{-- Quick add with Parent selector (fixed layout) --}}
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <input type="text" id="new-cat"
+                        class="flex-1 min-w-[10rem] border border-outline rounded-radius px-2 py-1 text-sm"
+                        placeholder="New category name…" />
+
+                    <select id="new-cat-parent"
+                        class="min-w-[12rem] border border-outline rounded-radius px-2 py-1 text-sm">
+                        <option value="0">— Parent: none —</option>
+                        @foreach ($categoriesTree ?? [] as $cat)
+                            <option value="{{ $cat['id'] }}">
+                                {{ str_repeat('— ', $cat['depth']) . $cat['name'] }}
+                            </option>
+                        @endforeach
+                    </select>
+
+                    <button type="button" class="shrink-0 text-sm px-3 py-1 border rounded-radius cursor-pointer"
+                        @click="
+            fetch('{{ route('admin.taxonomies.category.quick') }}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: document.getElementById('new-cat').value,
+                    parent: Number(document.getElementById('new-cat-parent').value) || 0
+                })
+            })
+            .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+            .then(() => location.reload())
+            .catch(() => alert('Could not create category'));
+        ">
+                        Add
+                    </button>
+                </div>
+
+            </div>
+        @endunless
+
+        {{-- Tags --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
+            <h3 class="font-semibold mb-2">Tags</h3>
+            <input type="text" name="tags[]"
+                class="w-full border border-outline rounded-radius px-2 py-1.5 text-sm"
+                placeholder="Comma separated or add one by one">
+        </div>
+
+        {{-- Custom Fields --}}
+        <div class="rounded-radius border border-outline dark:border-outline-dark p-3" x-data="{ rows: @js(old('meta', $post->metas->map(fn($m) => ['key' => $m->meta_key, 'value' => $m->meta_value])->values()->all())) }">
+            <h3 class="font-semibold mb-2">Custom Fields</h3>
+
+            <template x-if="!rows.length">
+                <p class="text-xs opacity-70">No custom fields.</p>
+            </template>
+
+            <template x-for="(row,idx) in rows" :key="idx">
+                <div class="flex items-center gap-2 mb-2">
+                    <input class="w-1/3 border border-outline rounded-radius px-2 py-1.5 text-xs" placeholder="key"
+                        :name="'meta[' + idx + '][key]'" x-model="row.key">
+                    <input class="flex-1 border border-outline rounded-radius px-2 py-1.5 text-xs" placeholder="value"
+                        :name="'meta[' + idx + '][value]'" x-model="row.value">
+                    <button type="button" class="text-red-600 text-xs" @click="rows.splice(idx,1)">×</button>
+                </div>
+            </template>
+
+            <button type="button" class="text-xs px-2 py-1 border rounded-radius"
+                @click="rows.push({key:'',value:''})">
+                Add Field
+            </button>
+        </div>
+    </aside>
+</form>
+
+@push('head')
+    {{-- If you use CKEditor/Tiptap/Quill, initialize it via your app.js --}}
+@endpush

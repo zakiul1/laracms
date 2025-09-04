@@ -2,14 +2,14 @@
     data-upload="{{ route('admin.media.upload') }}"
     data-show-template="{{ route('admin.media.show', ['media' => 'MEDIA_ID']) }}"
     data-meta-template="{{ route('admin.media.meta', ['media' => 'MEDIA_ID']) }}"
-    data-delete-template="{{ route('admin.media.delete', ['media' => 'MEDIA_ID']) }}">
-</div>
+    data-delete-template="{{ route('admin.media.delete', ['media' => 'MEDIA_ID']) }}"
+    data-cats="{{ route('admin.media.categories.json') }}"></div>
 
 <div id="media-browser-root" class="hidden"></div>
 
 <script>
     (function() {
-        // Read config safely from data-attrs
+        // ----------------- Config from data attrs -----------------
         var cfgEl = document.getElementById('media-browser-config');
         var CFG = {
             csrf: (cfgEl && cfgEl.dataset.csrf) || '',
@@ -18,19 +18,19 @@
                 upload: (cfgEl && cfgEl.dataset.upload) || '',
                 showT: (cfgEl && cfgEl.dataset.showTemplate) || '',
                 metaT: (cfgEl && cfgEl.dataset.metaTemplate) || '',
-                delT: (cfgEl && cfgEl.dataset.deleteTemplate) || ''
+                delT: (cfgEl && cfgEl.dataset.deleteTemplate) || '',
+                cats: (cfgEl && cfgEl.dataset.cats) || ''
             }
         };
 
-        // Small helpers
+        // ----------------- Tiny DOM helpers -----------------
         function h(tag, attrs) {
             var el = document.createElement(tag);
             if (attrs) {
                 for (var k in attrs) {
                     if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
-                    var v = attrs[k];
-                    if (k === 'class') el.className = v;
-                    else el.setAttribute(k, v);
+                    if (k === 'class') el.className = attrs[k];
+                    else el.setAttribute(k, attrs[k]);
                 }
             }
             for (var i = 2; i < arguments.length; i++) {
@@ -61,35 +61,49 @@
             return (i > 1 ? n.toFixed(2) : Math.round(n)) + ' ' + u[i];
         }
 
-        function isImg(m) {
-            return (m || '').toLowerCase().indexOf('image/') === 0;
+        function isImg(mime) {
+            return (mime || '').toLowerCase().indexOf('image/') === 0;
         }
 
-        // State
+        function spinner(cls) {
+            return h('div', {
+                class: 'inline-block animate-spin rounded-full border-2 border-current border-r-transparent ' +
+                    (cls || 'w-5 h-5')
+            });
+        }
+
+        // ----------------- State -----------------
         var modal = null,
             backdrop = null,
-            resolvePromise = null;
-        var state = null;
+            overlay = null;
+        var listWrap, paging, side, prog, footCount, insertBtn, sentinel;
+        var resolvePromise = null;
 
         function defState(opts) {
             return {
                 tab: 'library',
                 q: '',
                 type: 'all',
+                category: 'all',
                 view: 'grid',
                 page: 1,
                 per_page: 40,
+                last_page: 1,
+                loading: false,
                 multiple: !!(opts && opts.multiple),
                 selected: new Map(),
-                onSelect: opts && typeof opts.onSelect === 'function' ? opts.onSelect : null
+                onSelect: (opts && typeof opts.onSelect === 'function') ? opts.onSelect : null,
+                cats: []
             };
         }
+        var state = null;
 
-        // API
+        // ----------------- API -----------------
         function fetchList() {
             var p = new URLSearchParams();
             p.set('q', state.q);
             p.set('type', state.type);
+            if (state.category !== 'all') p.set('category_id', String(state.category));
             p.set('page', String(state.page));
             p.set('per_page', String(state.per_page));
             return fetch(CFG.routes.list + '?' + p.toString(), {
@@ -105,12 +119,13 @@
         function fetchShow(id) {
             var url = CFG.routes.showT.replace('MEDIA_ID', String(id));
             return fetch(url, {
-                headers: {
-                    Accept: 'application/json'
-                }
-            }).then(function(r) {
-                return r.json();
-            });
+                    headers: {
+                        Accept: 'application/json'
+                    }
+                })
+                .then(function(r) {
+                    return r.json();
+                });
         }
 
         function saveMeta(id, payload) {
@@ -139,6 +154,21 @@
             });
         }
 
+        function fetchCats() {
+            if (!CFG.routes.cats) return Promise.resolve([]);
+            return fetch(CFG.routes.cats, {
+                    headers: {
+                        Accept: 'application/json'
+                    }
+                })
+                .then(function(r) {
+                    return r.ok ? r.json() : [];
+                })
+                .catch(function() {
+                    return [];
+                });
+        }
+
         function uploadFiles(files) {
             var form = new FormData();
             Array.prototype.forEach.call(files, function(f) {
@@ -146,14 +176,26 @@
             });
             form.append('_token', CFG.csrf);
             return fetch(CFG.routes.upload, {
-                method: 'POST',
-                body: form
-            }).then(function(r) {
-                return r.json();
-            });
+                    method: 'POST',
+                    body: form
+                })
+                .then(function(r) {
+                    return r.json();
+                });
         }
 
-        // DOM Builders (no innerHTML / no template strings)
+        // ----------------- UI helpers -----------------
+        function showOverlay(text) {
+            if (!overlay) return;
+            overlay.classList.remove('hidden');
+            var t = overlay.querySelector('[data-txt]');
+            if (t) t.textContent = text || 'Loading…';
+        }
+
+        function hideOverlay() {
+            if (overlay) overlay.classList.add('hidden');
+        }
+
         function buildThumb(item) {
             var outer = h('div', {
                 class: 'border rounded overflow-hidden cursor-pointer hover:shadow',
@@ -162,9 +204,7 @@
             var box = h('div', {
                 class: 'bg-gray-50 flex items-center justify-center'
             });
-            // keep square via CSS aspect ratio
-            box.style.aspectRatio = '1 / 1';
-
+            box.style.aspectRatio = '1/1';
             if (isImg(item.mime)) {
                 var img = h('img', {
                     class: 'object-cover w-full h-full'
@@ -172,17 +212,15 @@
                 img.src = item.thumb || item.url || '';
                 box.appendChild(img);
             } else {
-                var t = h('div', {
+                box.appendChild(h('div', {
                     class: 'text-xs text-gray-500 p-4 break-all'
-                }, item.mime || 'file');
-                box.appendChild(t);
+                }, item.mime || 'file'));
             }
             var cap = h('div', {
                 class: 'p-2 text-xs truncate'
             }, item.filename || ('#' + item.id));
             outer.appendChild(box);
             outer.appendChild(cap);
-
             outer.addEventListener('click', function() {
                 toggleSelect(item);
             });
@@ -194,7 +232,6 @@
                 class: 'grid grid-cols-12 gap-2 items-center p-2 border-b cursor-pointer hover:bg-gray-50',
                 'data-media-id': String(item.id)
             });
-
             var c1 = h('div', {
                 class: 'col-span-1'
             });
@@ -203,7 +240,6 @@
             });
             img.src = item.thumb || item.url || '';
             c1.appendChild(img);
-
             var c2 = h('div', {
                 class: 'col-span-5 truncate'
             }, item.filename || ('#' + item.id));
@@ -218,7 +254,6 @@
             var c5 = h('div', {
                 class: 'col-span-2 text-xs'
             }, wh);
-
             row.appendChild(c1);
             row.appendChild(c2);
             row.appendChild(c3);
@@ -231,9 +266,12 @@
         }
 
         function buildPreviewSidebar(item) {
-            var wrap = h('div', null);
+            var wrap = h('div', {
+                class: 'flex flex-col h-full overflow-hidden'
+            });
+
             var previewBox = h('div', {
-                class: 'p-3'
+                class: 'p-3 shrink-0'
             });
             if (isImg(item.mime)) {
                 var im = h('img', {
@@ -246,10 +284,12 @@
                     class: 'border rounded p-4 text-xs text-gray-600 break-all'
                 }, item.filename || ''));
             }
-            wrap.appendChild(previewBox);
 
+            var formScroll = h('div', {
+                class: 'p-3 overflow-y-auto grow'
+            });
             var form = h('form', {
-                class: 'space-y-2 p-3'
+                class: 'space-y-2'
             });
 
             var lt = h('label', {
@@ -279,7 +319,7 @@
             var ld = h('label', {
                 class: 'block text-xs text-gray-500 mt-2'
             }, 'Description');
-            var id = h('textarea', {
+            var idd = h('textarea', {
                 class: 'w-full border rounded px-2 py-1',
                 name: 'description',
                 rows: '3'
@@ -291,20 +331,21 @@
             var saveB = btn('Save', 'px-3 py-1 border rounded', function(e) {
                 e.preventDefault();
                 saveMeta(item.id, {
-                    title: it.value,
-                    alt: ia.value,
-                    caption: ic.value,
-                    description: id.value
-                }).then(function() {
-                    loadLibrary();
-                });
+                        title: it.value,
+                        alt: ia.value,
+                        caption: ic.value,
+                        description: idd.value
+                    })
+                    .then(function() {
+                        loadLibrary(true);
+                    });
             });
             var delB = btn('Delete', 'px-3 py-1 border rounded text-red-600', function(e) {
                 e.preventDefault();
                 if (confirm('Delete permanently?')) {
                     deleteItem(item.id).then(function() {
                         state.selected.delete(item.id);
-                        loadLibrary();
+                        loadLibrary(true);
                     });
                 }
             });
@@ -331,15 +372,17 @@
             form.appendChild(lc);
             form.appendChild(ic);
             form.appendChild(ld);
-            form.appendChild(id);
+            form.appendChild(idd);
             form.appendChild(actions);
             form.appendChild(meta);
 
-            wrap.appendChild(form);
+            formScroll.appendChild(form);
+            wrap.appendChild(previewBox);
+            wrap.appendChild(formScroll);
             return wrap;
         }
 
-        // Render modal
+        // ----------------- Render modal -----------------
         function renderModal() {
             backdrop = h('div', {
                 class: 'fixed inset-0 bg-black/50 z-40'
@@ -350,12 +393,23 @@
                 class: 'fixed inset-0 z-50 flex items-center justify-center'
             });
             var shell = h('div', {
-                class: 'bg-white w-[95vw] h-[85vh] max-w-6xl rounded-xl shadow-xl overflow-hidden flex flex-col'
+                class: 'relative bg-white w-[95vw] max-w-6xl h-[85vh] rounded-xl shadow-xl overflow-hidden flex flex-col'
             });
+
+            overlay = h('div', {
+                    class: 'absolute inset-0 z-10 hidden bg-white/70 backdrop-blur-[1px] flex items-center justify-center'
+                },
+                h('div', {
+                    class: 'flex items-center gap-3 text-sm text-gray-700'
+                }, spinner('w-6 h-6'), h('span', {
+                    'data-txt': '1'
+                }, 'Loading…'))
+            );
+            shell.appendChild(overlay);
 
             // Header
             var head = h('div', {
-                class: 'p-3 border-b flex items-center gap-2'
+                class: 'p-3 border-b flex items-center gap-2 shrink-0'
             });
             head.appendChild(h('div', {
                 class: 'font-semibold'
@@ -363,39 +417,43 @@
             var headRight = h('div', {
                 class: 'ml-auto flex items-center gap-2'
             });
-            headRight.appendChild(btn('Upload Files', 'px-3 py-1 border rounded', function() {
+            var bUpload = btn('Upload Files', 'px-3 py-1 border rounded', function() {
                 switchTab('upload');
-            }));
-            headRight.appendChild(btn('Media Library', 'px-3 py-1 border rounded', function() {
+            });
+            var bLib = btn('Media Library', 'px-3 py-1 border rounded', function() {
                 switchTab('library');
-            }));
-            headRight.appendChild(btn('Close', 'px-3 py-1 border rounded', close));
+            });
+            var bClose = btn('Close', 'px-3 py-1 border rounded', close);
+            headRight.appendChild(bUpload);
+            headRight.appendChild(bLib);
+            headRight.appendChild(bClose);
             head.appendChild(headRight);
 
-            // Body grid
+            // Body
             var body = h('div', {
-                class: 'flex-1 grid grid-cols-12'
+                class: 'flex-1 grid grid-cols-12 overflow-hidden'
             });
 
             // Main
             var main = h('div', {
-                class: 'col-span-8 border-r flex flex-col'
+                class: 'col-span-8 border-r flex flex-col overflow-hidden'
             });
 
             // Toolbar
             var toolbar = h('div', {
-                class: 'p-3 border-b flex items-center gap-2'
+                class: 'p-3 border-b flex items-center gap-2 shrink-0'
             });
             var q = h('input', {
                 class: 'border rounded px-3 py-2 w-64',
-                placeholder: 'Search...'
+                placeholder: 'Search…'
             });
             q.value = state.q;
             q.addEventListener('input', function(e) {
                 state.q = e.target.value;
                 state.page = 1;
-                if (state.tab === 'library') loadLibrary();
+                if (state.tab === 'library') loadLibrary(true);
             });
+
             var typeSel = h('select', {
                 class: 'border rounded px-2 py-2'
             });
@@ -405,46 +463,63 @@
                 ['video', 'Video'],
                 ['audio', 'Audio'],
                 ['doc', 'Docs']
-            ].forEach(function(opt) {
-                var o = h('option', {
-                    value: opt[0]
-                }, opt[1]);
-                if (state.type === opt[0]) o.selected = true;
-                typeSel.appendChild(o);
+            ].forEach(function(o) {
+                var opt = h('option', {
+                    value: o[0]
+                }, o[1]);
+                if (state.type === o[0]) opt.selected = true;
+                typeSel.appendChild(opt);
             });
             typeSel.addEventListener('change', function(e) {
                 state.type = e.target.value;
                 state.page = 1;
-                loadLibrary();
+                loadLibrary(true);
             });
+
+            // Category filter (appears when endpoint returns items)
+            var catSelWrap = h('div', {
+                class: 'hidden',
+                'data-cats': '1'
+            });
+            var catSel = h('select', {
+                class: 'border rounded px-2 py-2'
+            });
+            catSel.addEventListener('change', function(e) {
+                state.category = e.target.value;
+                state.page = 1;
+                loadLibrary(true);
+            });
+            catSelWrap.appendChild(catSel);
+
             var viewWrap = h('div', {
                 class: 'ml-auto flex items-center gap-2'
             });
             var bGrid = btn('Grid', 'px-2 py-1 border rounded', function() {
                 state.view = 'grid';
-                renderLibrary();
+                renderLibrary([], true);
                 bGrid.classList.add('bg-gray-100');
                 bList.classList.remove('bg-gray-100');
             });
             var bList = btn('List', 'px-2 py-1 border rounded', function() {
                 state.view = 'list';
-                renderLibrary();
+                renderLibrary([], true);
                 bList.classList.add('bg-gray-100');
                 bGrid.classList.remove('bg-gray-100');
             });
             if (state.view === 'grid') bGrid.classList.add('bg-gray-100');
             else bList.classList.add('bg-gray-100');
-            viewWrap.appendChild(bGrid);
-            viewWrap.appendChild(bList);
 
             toolbar.appendChild(q);
             toolbar.appendChild(typeSel);
+            toolbar.appendChild(catSelWrap);
             toolbar.appendChild(viewWrap);
+            viewWrap.appendChild(bGrid);
+            viewWrap.appendChild(bList);
 
             // Upload tab
             var uploadBox = h('div', {
                 id: 'mb-upload',
-                class: state.tab === 'upload' ? 'block p-6' : 'hidden'
+                class: state.tab === 'upload' ? 'block p-6 overflow-auto grow' : 'hidden'
             });
             var drop = h('div', {
                 class: 'border-2 border-dashed rounded p-8 text-center'
@@ -463,8 +538,8 @@
                 class: 'text-xs text-gray-500 mb-4'
             }, 'or'));
             var lbl = h('label', {
-                class: 'inline-block px-3 py-2 border rounded cursor-pointer'
-            }, 'Select Files');
+                class: 'inline-flex items-center gap-2 px-3 py-2 border rounded cursor-pointer'
+            }, 'Select Files', spinner('w-4 h-4 hidden'));
             var file = h('input', {
                 type: 'file',
                 class: 'hidden',
@@ -475,7 +550,7 @@
             });
             lbl.appendChild(file);
             drop.appendChild(lbl);
-            var prog = h('div', {
+            prog = h('div', {
                 id: 'mb-upload-progress',
                 class: 'mt-4 space-y-2 text-left'
             });
@@ -485,16 +560,21 @@
             // Library tab
             var libBox = h('div', {
                 id: 'mb-library',
-                class: state.tab === 'library' ? 'flex-1 flex flex-col' : 'hidden'
+                class: state.tab === 'library' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             });
-            var listWrap = h('div', {
+            listWrap = h('div', {
                 class: 'flex-1 overflow-auto',
                 id: 'mb-list'
             });
-            var paging = h('div', {
-                class: 'p-3 border-t flex items-center justify-between',
+            paging = h('div', {
+                class: 'p-3 border-t flex items-center justify-between shrink-0',
                 id: 'mb-paging'
             });
+            sentinel = h('div', {
+                id: 'mb-sentinel',
+                class: 'h-1'
+            });
+            listWrap.appendChild(sentinel);
             libBox.appendChild(listWrap);
             libBox.appendChild(paging);
 
@@ -502,75 +582,145 @@
             main.appendChild(uploadBox);
             main.appendChild(libBox);
 
-            // Sidebar
-            var side = h('div', {
-                class: 'col-span-4 flex flex-col',
-                id: 'mb-sidebar'
+            // Sidebar (independent scroll)
+            side = h('div', {
+                class: 'col-span-4 flex flex-col h-full overflow-hidden'
             });
             side.appendChild(h('div', {
                 class: 'p-4 text-sm text-gray-500'
             }, 'Select an item to see details.'));
 
-            // Footer
+            // Footer (sticky)
             var foot = h('div', {
-                class: 'p-3 border-t flex items-center justify-between'
+                class: 'p-3 border-t flex items-center justify-between shrink-0 bg-white'
             });
-            var cnt = h('span', {
-                class: 'text-sm',
-                'data-count': '1'
+            footCount = h('span', {
+                class: 'text-sm'
             }, '0 selected');
-            foot.appendChild(h('div', null, cnt));
+            insertBtn = btn('Insert', 'px-4 py-2 border rounded', insertSelection);
+            foot.appendChild(footCount);
             foot.appendChild(h('div', {
                 class: 'flex items-center gap-2'
-            }, btn('Insert', 'px-4 py-2 border rounded', insertSelection)));
+            }, insertBtn));
 
             body.appendChild(main);
             body.appendChild(side);
             shell.appendChild(head);
             shell.appendChild(body);
             shell.appendChild(foot);
+
             modal.appendChild(shell);
             document.body.appendChild(backdrop);
             document.body.appendChild(modal);
 
-            // Inner functions need references
-            function renderPaging(meta) {
-                while (paging.firstChild) paging.removeChild(paging.firstChild);
-                var cp = (meta && meta.current_page) || 1;
-                var lp = (meta && meta.last_page) || 1;
-                var label = h('div', null, 'Page ' + cp + ' of ' + lp);
-                var controls = h('div', {
-                    class: 'flex gap-2'
-                });
-                var prev = btn('Prev', 'px-3 py-1 border rounded', function() {
-                    state.page = Math.max(1, state.page - 1);
-                    loadLibrary();
-                });
-                var next = btn('Next', 'px-3 py-1 border rounded', function() {
-                    state.page = Math.min(lp, state.page + 1);
-                    loadLibrary();
-                });
-                if (cp <= 1) prev.disabled = true;
-                if (cp >= lp) next.disabled = true;
-                controls.appendChild(prev);
-                controls.appendChild(next);
-                paging.appendChild(label);
-                paging.appendChild(controls);
-            }
+            // Load categories if available
+            fetchCats().then(function(items) {
+                if (Array.isArray(items) && items.length) {
+                    catSelWrap.classList.remove('hidden');
+                    while (catSel.firstChild) catSel.removeChild(catSel.firstChild);
+                    catSel.appendChild(h('option', {
+                        value: 'all'
+                    }, 'All Categories'));
+                    items.forEach(function(c) {
+                        var nm = c.name || (c.term && c.term.name) || ('Category #' + c.id);
+                        catSel.appendChild(h('option', {
+                            value: String(c.id)
+                        }, nm));
+                    });
+                }
+            });
 
-            function renderList(data) {
+            // Infinite scroll
+            var io = new IntersectionObserver(function(entries) {
+                entries.forEach(function(e) {
+                    if (e.isIntersecting && state.tab === 'library' && state.page < state
+                        .last_page && !state.loading) {
+                        state.page += 1;
+                        appendLibrary();
+                    }
+                });
+            });
+            io.observe(sentinel);
+        }
+
+        // ----------------- Render pieces -----------------
+        function renderSelectionHighlights() {
+            var nodes = listWrap.querySelectorAll('[data-media-id]');
+            Array.prototype.forEach.call(nodes, function(el) {
+                var id = +el.getAttribute('data-media-id');
+                var on = state.selected.has(id);
+                el.classList.toggle('ring-2', on);
+                el.classList.toggle('ring-blue-400', on);
+            });
+            footCount.textContent = state.selected.size + ' selected';
+            insertBtn.disabled = state.selected.size === 0;
+        }
+
+        function renderSidebar() {
+            while (side.firstChild) side.removeChild(side.firstChild);
+            if (state.selected.size !== 1) {
+                side.appendChild(h('div', {
+                    class: 'p-4 text-sm text-gray-500'
+                }, state.selected.size ? 'Multiple items selected.' : 'Select an item to see details.'));
+                return;
+            }
+            var id = state.selected.keys().next().value;
+            fetchShow(id).then(function(item) {
+                side.appendChild(buildPreviewSidebar(item));
+            });
+        }
+
+        function renderPaging(meta) {
+            while (paging.firstChild) paging.removeChild(paging.firstChild);
+            var cp = (meta && meta.current_page) || state.page || 1;
+            var lp = (meta && meta.last_page) || state.last_page || 1;
+            state.last_page = lp;
+            var label = h('div', null, 'Page ' + cp + ' of ' + lp);
+            var controls = h('div', {
+                class: 'flex gap-2'
+            });
+            var prev = btn('Prev', 'px-3 py-1 border rounded', function() {
+                state.page = Math.max(1, state.page - 1);
+                loadLibrary(true);
+            });
+            var next = btn('Next', 'px-3 py-1 border rounded', function() {
+                state.page = Math.min(lp, state.page + 1);
+                loadLibrary(true);
+            });
+            if (cp <= 1) prev.disabled = true;
+            if (cp >= lp) next.disabled = true;
+            controls.appendChild(prev);
+            controls.appendChild(next);
+            paging.appendChild(label);
+            paging.appendChild(controls);
+        }
+
+        function renderLibrary(data, reset) {
+            if (reset) {
                 while (listWrap.firstChild) listWrap.removeChild(listWrap.firstChild);
-                if (state.view === 'grid') {
-                    var grid = h('div', {
+                listWrap.appendChild(sentinel);
+            }
+            if (state.view === 'grid') {
+                var grid = listWrap.querySelector('[data-grid]');
+                if (!grid) {
+                    grid = h('div', {
+                        'data-grid': '1',
                         class: 'p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3'
                     });
-                    (data || []).forEach(function(it) {
-                        grid.appendChild(buildThumb(it));
+                    listWrap.insertBefore(grid, sentinel);
+                }
+                (data || []).forEach(function(it) {
+                    grid.appendChild(buildThumb(it));
+                });
+            } else {
+                var table = listWrap.querySelector('[data-list]');
+                if (!table) {
+                    table = h('div', {
+                        'data-list': '1',
+                        class: 'min-w-full'
                     });
-                    listWrap.appendChild(grid);
-                } else {
                     var header = h('div', {
-                        class: 'grid grid-cols-12 gap-2 text-xs font-medium p-2 border-b bg-gray-50'
+                        class: 'grid grid-cols-12 gap-2 text-xs font-medium p-2 border-b bg-gray-50 sticky top-0'
                     });
                     header.appendChild(h('div', {
                         class: 'col-span-1'
@@ -587,95 +737,78 @@
                     header.appendChild(h('div', {
                         class: 'col-span-2'
                     }, 'Dimensions'));
-                    listWrap.appendChild(header);
-                    (data || []).forEach(function(it) {
-                        listWrap.appendChild(buildRow(it));
-                    });
+                    table.appendChild(header);
+                    listWrap.insertBefore(table, sentinel);
                 }
+                (data || []).forEach(function(it) {
+                    table.appendChild(buildRow(it));
+                });
+            }
+            renderSelectionHighlights();
+        }
+
+        function loadLibrary(reset) {
+            state.loading = true;
+            showOverlay('Loading media…');
+            if (reset) state.page = Math.max(1, state.page);
+            fetchList().then(function(res) {
+                renderLibrary(res && res.data, true);
+                renderPaging(res && res.meta);
+                renderSidebar();
+            }).finally(function() {
+                state.loading = false;
+                hideOverlay();
+            });
+        }
+
+        function appendLibrary() {
+            state.loading = true;
+            showOverlay('Loading more…');
+            fetchList().then(function(res) {
+                renderLibrary(res && res.data, false);
+                renderPaging(res && res.meta);
                 renderSelectionHighlights();
-            }
-
-            function renderSelectionHighlights() {
-                var nodes = listWrap.querySelectorAll('[data-media-id]');
-                Array.prototype.forEach.call(nodes, function(el) {
-                    var id = +el.getAttribute('data-media-id');
-                    var on = state.selected.has(id);
-                    el.classList.toggle('ring-2', on);
-                    el.classList.toggle('ring-blue-400', on);
-                });
-                cnt.textContent = state.selected.size + ' selected';
-            }
-
-            function renderSidebar() {
-                while (side.firstChild) side.removeChild(side.firstChild);
-                if (state.selected.size !== 1) {
-                    side.appendChild(h('div', {
-                            class: 'p-4 text-sm text-gray-500'
-                        }, state.selected.size ? 'Multiple items selected.' :
-                        'Select an item to see details.'));
-                    return;
-                }
-                var id = state.selected.keys().next().value;
-                fetchShow(id).then(function(item) {
-                    side.appendChild(buildPreviewSidebar(item));
-                });
-            }
-
-            // Expose inner helpers
-            renderModal.renderList = renderList;
-            renderModal.renderPaging = renderPaging;
-            renderModal.renderSidebar = renderSidebar;
-            renderModal.listWrap = listWrap;
-            renderModal.prog = prog;
+            }).finally(function() {
+                state.loading = false;
+                hideOverlay();
+            });
         }
 
-        function switchTab(tab) {
-            state.tab = tab;
-            var up = modal.querySelector('#mb-upload');
-            var lb = modal.querySelector('#mb-library');
-            if (up && lb) {
-                up.classList.toggle('hidden', tab !== 'upload');
-                lb.classList.toggle('hidden', tab !== 'library');
-            }
-            if (tab === 'library') loadLibrary();
-        }
-
+        // ----------------- Actions -----------------
         function toggleSelect(item) {
             if (!state.multiple) state.selected.clear();
             if (state.selected.has(item.id)) state.selected.delete(item.id);
             else state.selected.set(item.id, item);
-            renderModal.renderSelectionHighlights && renderModal.renderSelectionHighlights();
-            renderModal.renderSidebar && renderModal.renderSidebar();
-        }
-
-        function loadLibrary() {
-            var lw = renderModal.listWrap;
-            while (lw.firstChild) lw.removeChild(lw.firstChild);
-            lw.appendChild(h('div', {
-                class: 'p-4 text-sm text-gray-500'
-            }, 'Loading...'));
-
-            fetchList().then(function(res) {
-                renderModal.renderList(res && res.data);
-                renderModal.renderPaging(res && res.meta);
-                renderModal.renderSidebar();
-            });
+            renderSelectionHighlights();
+            renderSidebar();
         }
 
         function handleFiles(fileList) {
-            var prog = renderModal.prog;
             while (prog.firstChild) prog.removeChild(prog.firstChild);
+            var row = h('div', {
+                class: 'flex items-center gap-2 text-sm text-gray-600 mt-2'
+            }, spinner('w-5 h-5'), 'Uploading…');
+            prog.appendChild(row);
+            insertBtn.disabled = true;
+            showOverlay('Uploading…');
+
             uploadFiles(fileList).then(function(res) {
+                while (prog.firstChild) prog.removeChild(prog.firstChild);
                 var arr = (res && res.uploaded) || [];
+                if (!arr.length) prog.appendChild(h('div', {
+                    class: 'text-xs text-red-600'
+                }, 'No files uploaded.'));
                 arr.forEach(function(it) {
-                    var line = h('div', {
+                    prog.appendChild(h('div', {
                         class: 'text-xs'
-                    }, 'Uploaded: ' + (it.filename || it.url || ('#' + it.id)));
-                    prog.appendChild(line);
+                    }, 'Uploaded: ' + (it.filename || it.url || ('#' + it.id))));
                     state.selected.set(it.id, it);
                 });
                 switchTab('library');
-                loadLibrary();
+                loadLibrary(true);
+            }).finally(function() {
+                hideOverlay();
+                insertBtn.disabled = false;
             });
         }
 
@@ -689,22 +822,42 @@
             close();
         }
 
+        function switchTab(tab) {
+            state.tab = tab;
+            var up = modal.querySelector('#mb-upload');
+            var lb = modal.querySelector('#mb-library');
+            if (up && lb) {
+                up.classList.toggle('hidden', tab !== 'upload');
+                lb.classList.toggle('hidden', tab !== 'library');
+            }
+            if (tab === 'library') loadLibrary(true);
+        }
+
+        function escClose(e) {
+            if (e.key === 'Escape') close();
+        }
+
         function close() {
             if (modal) modal.remove();
             if (backdrop) backdrop.remove();
+            document.removeEventListener('keydown', escClose, true);
             modal = null;
             backdrop = null;
             state = null;
         }
 
-        // Public entry
+        // ----------------- Public entry -----------------
         window.openMediaBrowser = function(opts) {
-            if (modal) try {
-                close();
-            } catch (e) {}
+            if (modal) {
+                try {
+                    close();
+                } catch (_) {}
+            }
             state = defState(opts || {});
             renderModal();
-            if (state.tab === 'library') loadLibrary();
+            showOverlay('Loading media…');
+            if (state.tab === 'library') loadLibrary(true);
+            document.addEventListener('keydown', escClose, true);
             return new Promise(function(res) {
                 resolvePromise = res;
             });

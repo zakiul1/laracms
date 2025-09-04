@@ -3,19 +3,10 @@
 namespace App\Support\Cms;
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 
 /**
- * Collects admin sidebar menu items and groups (modules can add here).
- *
- * Item shape:
- * - key: string (unique)
- * - label: string
- * - icon?: string (lucide component name like 'lucide-file-text', or plain text/emoji)
- * - route?: string (route name)
- * - params?: array (route parameters)
- * - url?: string (explicit URL if not using route)
- * - order?: int (lower first)
- * - children?: array<item>
+ * Admin sidebar menu registry with final-stage dedupe by resolved URL.
  */
 class AdminMenuRegistry
 {
@@ -33,25 +24,51 @@ class AdminMenuRegistry
             'order' => 1,
         ]);
 
-        // Keep Settings (you didn't ask to remove it)
+        // Seed Posts only if not already added elsewhere
+        if (!$this->has('posts') && Route::has('admin.posts.index')) {
+            $this->addResource(
+                key: 'posts',
+                label: 'Posts',
+                icon: 'lucide-file-text',
+                indexRoute: 'admin.posts.index',
+                createRoute: 'admin.posts.create',
+                order: 20
+            );
+        }
+
+        // Seed Pages only if not already added elsewhere
+        if (!$this->has('pages') && Route::has('admin.pages.index')) {
+            $this->addResource(
+                key: 'pages',
+                label: 'Pages',
+                icon: 'lucide-layout',
+                indexRoute: 'admin.pages.index',
+                createRoute: 'admin.pages.create',
+                order: 21
+            );
+        }
+
+        // Settings
         $this->add([
             'key' => 'settings',
             'label' => 'Settings',
             'icon' => 'lucide-settings',
             'order' => 100,
-            // keep an explicit URL if you want a hash anchor under dashboard
             'url' => $this->safeRouteUrl('admin.dashboard') . '#settings',
         ]);
     }
 
-    /** Add or merge a top-level item/group */
+    public function has(string $key): bool
+    {
+        return isset($this->items[$key]);
+    }
+
     public function add(array $item): void
     {
         $item = $this->normalize($item);
         $key = $item['key'];
 
         if (isset($this->items[$key])) {
-            // Merge existing (children merge by key)
             $existing = $this->items[$key];
             $existing['label'] = $item['label'] ?? $existing['label'] ?? $key;
             $existing['icon'] = $item['icon'] ?? $existing['icon'] ?? null;
@@ -71,14 +88,12 @@ class AdminMenuRegistry
         $this->items[$key] = $item;
     }
 
-    /** Convenience: create/merge a top-level group with a fixed key */
     public function group(string $key, array $group): void
     {
         $group['key'] = $key;
         $this->add($group);
     }
 
-    /** Add a child under an existing group key */
     public function addChild(string $groupKey, array $child): void
     {
         $child = $this->normalize($child);
@@ -96,18 +111,52 @@ class AdminMenuRegistry
         $this->items[$groupKey]['children'] = $this->mergeChildren($children, [$child]);
     }
 
-    /** Remove a top-level item by key */
+    /** Standard resource: "All" + "Add New" */
+    public function addResource(
+        string $key,
+        string $label,
+        ?string $icon,
+        string $indexRoute,
+        ?string $createRoute = null,
+        ?int $order = 50
+    ): void {
+        $children = [
+            [
+                'key' => $key . '.all',
+                'label' => 'All ' . $label,
+                'route' => $indexRoute,
+                'order' => 10,
+            ],
+        ];
+
+        if ($createRoute && Route::has($createRoute)) {
+            $children[] = [
+                'key' => $key . '.create',
+                'label' => 'Add New',
+                'route' => $createRoute,
+                'order' => 20,
+            ];
+        }
+
+        $this->add([
+            'key' => $key,
+            'label' => $label,
+            'icon' => $icon,
+            'route' => $indexRoute,
+            'order' => $order ?? 50,
+            'children' => $children,
+        ]);
+    }
+
     public function remove(string $key): void
     {
         unset($this->items[$key]);
     }
 
-    /** Remove a child from a group by child key */
     public function removeChild(string $groupKey, string $childKey): void
     {
-        if (!isset($this->items[$groupKey]['children'])) {
+        if (!isset($this->items[$groupKey]['children']))
             return;
-        }
 
         $this->items[$groupKey]['children'] = array_values(array_filter(
             $this->items[$groupKey]['children'],
@@ -115,32 +164,48 @@ class AdminMenuRegistry
         ));
     }
 
-    /** @return array<int,array> sorted list with children sorted and URLs resolved at render time */
+    /**
+     * Resolve URLs, compute active/expanded, sort, and **final dedupe by URL**.
+     *
+     * @return array<int,array>
+     */
     public function list(): array
     {
         $items = array_values($this->items);
+        $current = url()->current();
 
-        // Resolve URLs *now* so Route::has() sees all registered routes.
         foreach ($items as &$it) {
-            // top-level URL resolution
+            // resolve top-level url
             if (!empty($it['route'])) {
                 $it['url'] = $this->safeRouteUrl($it['route'], $it['params'] ?? []);
             }
 
-            // children URL resolution + sort
+            // resolve children urls
+            $anyChildActive = false;
             if (!empty($it['children'])) {
                 foreach ($it['children'] as &$c) {
                     if (!empty($c['route'])) {
                         $c['url'] = $this->safeRouteUrl($c['route'], $c['params'] ?? []);
                     }
+                    $c['active'] = $this->isActive($c['url'] ?? null, $current);
+                    if ($c['active'])
+                        $anyChildActive = true;
                 }
-                usort($it['children'], fn($a, $b) => ($a['order'] ?? 50) <=> ($b['order'] ?? 50));
                 unset($c);
+
+                // ✅ FINAL DEDUPE after URLs are resolved (route/url don’t matter anymore)
+                $it['children'] = $this->dedupeChildrenByResolvedUrl($it['children']);
+
+                // sort
+                usort($it['children'], fn($a, $b) => ($a['order'] ?? 50) <=> ($b['order'] ?? 50));
             }
+
+            // active/expanded
+            $it['active'] = $this->isActive($it['url'] ?? null, $current) || $anyChildActive;
+            $it['expanded'] = $anyChildActive;
         }
         unset($it);
 
-        // sort top-level
         usort($items, fn($a, $b) => ($a['order'] ?? 50) <=> ($b['order'] ?? 50));
 
         return $items;
@@ -152,30 +217,71 @@ class AdminMenuRegistry
         $item['label'] = $item['label'] ?? ucfirst($item['key']);
         $item['order'] = $item['order'] ?? 50;
 
-        // IMPORTANT: Do NOT resolve $item['url'] here based on route; routes may not be loaded yet.
-        // Keep any explicit 'url' passed by the caller; otherwise leave null and resolve in list().
+        // Normalize children and ensure default child 'order'
+        $children = [];
+        foreach (($item['children'] ?? []) as $idx => $child) {
+            $c = $this->normalize($child);
+            $c['order'] = $c['order'] ?? (($idx + 1) * 10); // 10, 20, ...
+            $children[] = $c;
+        }
+        $item['children'] = $children;
 
-        $item['children'] = array_map([$this, 'normalize'], $item['children'] ?? []);
         return $item;
     }
 
+    /**
+     * Merge children roughly by key (early stage).
+     * Real de-dupe happens in list() after URL resolution.
+     */
     protected function mergeChildren(array $existing, array $incoming): array
     {
-        // index by key for stable merge
         $byKey = [];
         foreach ($existing as $c) {
-            $byKey[$c['key'] ?? StrKey::from($c['label'] ?? uniqid('c'))] = $c;
+            $key = $c['key'] ?? StrKey::from($c['label'] ?? uniqid('c'));
+            $byKey[$key] = $c + ['key' => $key];
         }
         foreach ($incoming as $c) {
             $k = $c['key'] ?? StrKey::from($c['label'] ?? uniqid('c'));
             if (isset($byKey[$k])) {
-                // shallow merge; prefer incoming scalar fields
-                $byKey[$k] = array_merge($byKey[$k], $c);
+                $merged = array_merge($byKey[$k], $c);
+                $merged['children'] = $this->mergeChildren($byKey[$k]['children'] ?? [], $c['children'] ?? []);
+                $byKey[$k] = $merged;
             } else {
+                $c['key'] = $k;
                 $byKey[$k] = $c;
             }
         }
         return array_values($byKey);
+    }
+
+    /** Final dedupe pass: collapse items that resolve to the same URL (or same route if URL is '#'). */
+    protected function dedupeChildrenByResolvedUrl(array $children): array
+    {
+        $norm = function (?string $u): string {
+            if (!$u)
+                return '';
+            $u = preg_replace('/[#?].*$/', '', $u);
+            return rtrim($u, '/');
+        };
+
+        $map = [];
+        foreach ($children as $c) {
+            $url = $norm($c['url'] ?? '');
+            $sig = $url ?: ('route:' . ($c['route'] ?? '') . '|' . json_encode($c['params'] ?? []));
+            if (!isset($map[$sig])) {
+                $map[$sig] = $c;
+            } else {
+                // If both exist, prefer the one that has a real URL over '#'
+                $keep = $map[$sig];
+                $curr = $c;
+                $keepUrl = $norm($keep['url'] ?? '');
+                $currUrl = $norm($curr['url'] ?? '');
+                if ($currUrl && (!$keepUrl || $keepUrl === '#')) {
+                    $map[$sig] = $curr;
+                }
+            }
+        }
+        return array_values($map);
     }
 
     protected function safeRouteUrl(string $name, array $params = []): string
@@ -185,6 +291,17 @@ class AdminMenuRegistry
         } catch (\Throwable $e) {
             return '#';
         }
+    }
+
+    protected function isActive(?string $url, string $current): bool
+    {
+        if (!$url)
+            return false;
+        $normalize = function (string $u): string {
+            $u = preg_replace('/[#?].*$/', '', $u);
+            return rtrim($u, '/');
+        };
+        return $normalize($url) === $normalize($current);
     }
 }
 

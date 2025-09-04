@@ -11,7 +11,12 @@
             display: none !important
         }
     </style>
+
     @vite(['resources/css/app.css', 'resources/js/app.js'])
+
+    {{-- ✅ Make Alpine stores (toast, confirm, etc.) available globally, ASAP --}}
+    <x-ui.alpine-stores />
+
     @php function_exists('do_action') && do_action('admin_head'); @endphp
     @stack('head')
 </head>
@@ -19,10 +24,8 @@
 <body class="h-full bg-white dark:bg-neutral-950 text-on-surface dark:text-on-surface-dark antialiased">
     @php
         /**
-         * Prefer menu from a view composer (shared as $adminMenu).
-         * Fallback: build it locally once so nothing breaks.
+         * Prefer a composer-provided $adminMenu; else build it once here
          */
-        /** @var array|null $adminMenu */
         $menuItems = $adminMenu ?? null;
 
         if ($menuItems === null) {
@@ -35,17 +38,31 @@
             $menuItems = $menu->list();
         }
 
-        // Active-state helpers
-        $isUrlActive = function (?string $url): bool {
-            if (!$url) {
-                return false;
+        // -------- ACTIVE HELPERS (exact vs prefix) --------
+        $normalizePath = function (?string $u): string {
+            if (!$u) {
+                return '';
             }
-            $path = parse_url($url, PHP_URL_PATH) ?: $url;
-            return request()->fullUrlIs($url) || request()->is(ltrim($path, '/') . '*');
+            $p = parse_url($u, PHP_URL_PATH) ?: '/';
+            return '/' . ltrim(rtrim($p, '/'), '/'); // absolute path, no trailing slash
         };
-        $groupIsActive = function (array $kids) use ($isUrlActive): bool {
+
+        // submenu items: exact path match only
+        $isUrlActiveExact = function (?string $url) use ($normalizePath): bool {
+            return $normalizePath($url) === $normalizePath(request()->url());
+        };
+
+        // top-level links (no children): prefix match so /admin/media highlights on /admin/media/*
+        $isUrlActivePrefix = function (?string $url) use ($normalizePath): bool {
+            $cur = $normalizePath(request()->url());
+            $base = $normalizePath($url);
+            return $cur === $base || ($base !== '/' && str_starts_with($cur, $base . '/'));
+        };
+
+        // groups are active if any child is active (EXACT check)
+        $groupIsActive = function (array $kids) use ($isUrlActiveExact): bool {
             foreach ($kids as $c) {
-                if ($isUrlActive($c['url'] ?? '')) {
+                if ($isUrlActiveExact($c['url'] ?? null)) {
                     return true;
                 }
             }
@@ -83,13 +100,13 @@
                 </svg>
                 <input type="search"
                     class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 pl-9 text-sm
-                          focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
-                          disabled:cursor-not-allowed disabled:opacity-75 dark:border-outline-dark
-                          dark:bg-surface-dark/50 dark:focus-visible:outline-primary-dark"
+                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
+                              disabled:cursor-not-allowed disabled:opacity-75 dark:border-outline-dark
+                              dark:bg-surface-dark/50 dark:focus-visible:outline-primary-dark"
                     name="search" aria-label="Search" placeholder="Search" />
             </div>
 
-            <!-- MENU (fully dynamic via admin_menu hook) -->
+            <!-- MENU (dynamic via admin_menu hook) -->
             <div class="flex flex-col gap-2 overflow-y-auto pb-6">
                 @foreach ($menuItems as $i => $item)
                     @php
@@ -98,16 +115,16 @@
                         $url = $item['url'] ?? '#';
                         $kids = $item['children'] ?? [];
                         $hasKids = !empty($kids);
-                        $isActive = $hasKids ? $groupIsActive($kids) : $isUrlActive($url);
+                        $isActive = $hasKids ? $groupIsActive($kids) : $isUrlActivePrefix($url);
                     @endphp
 
                     @if (!$hasKids)
                         <!-- Top-level link (icon allowed) -->
                         <a href="{{ $url }}"
                             class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm font-medium underline-offset-2 focus-visible:underline focus:outline-hidden
-                              {{ $isActive
-                                  ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                  : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
+                             {{ $isActive
+                                 ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                 : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                             @if ($icon)
                                 <x-ui.icon :name="$icon" class="size-5 shrink-0" aria-hidden="true" />
                             @endif
@@ -121,9 +138,9 @@
                                 id="grp-{{ $i }}-btn" aria-controls="grp-{{ $i }}"
                                 :aria-expanded="isExpanded ? 'true' : 'false'"
                                 class="flex items-center justify-between rounded-radius gap-2 px-2 py-1.5 text-sm font-medium underline-offset-2 focus:outline-hidden focus-visible:underline
-                                       {{ $isActive
-                                           ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                           : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
+                                           {{ $isActive
+                                               ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                               : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                                 @if ($icon)
                                     <x-ui.icon :name="$icon" class="size-5 shrink-0" aria-hidden="true" />
                                 @endif
@@ -147,14 +164,15 @@
                                     @php
                                         $cLabel = $child['label'] ?? 'Item';
                                         $cUrl = $child['url'] ?? '#';
-                                        $cActive = $isUrlActive($cUrl);
+                                        // Children are exact-match only
+                                        $cActive = $isUrlActiveExact($cUrl);
                                     @endphp
                                     <li class="px-1 py-0.5 first:mt-2">
                                         <a href="{{ $cUrl }}"
                                             class="flex items-center rounded-radius gap-2 px-2 py-1.5 text-sm underline-offset-2 focus:outline-hidden focus-visible:underline
-                                              {{ $cActive
-                                                  ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
-                                                  : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
+                                             {{ $cActive
+                                                 ? 'bg-primary/10 text-on-surface-strong dark:bg-primary-dark/10 dark:text-on-surface-dark-strong'
+                                                 : 'text-on-surface hover:bg-primary/5 hover:text-on-surface-strong dark:text-on-surface-dark dark:hover:bg-primary-dark/5 dark:hover:text-on-surface-dark-strong' }}">
                                             <span>{{ $cLabel }}</span>
                                         </a>
                                     </li>
@@ -188,6 +206,14 @@
             <span class="sr-only">sidebar toggle</span>
         </button>
     </div>
+
+    {{-- ✅ Global UI (visual parts at the end of body) --}}
+    <x-ui.toasts />
+    <x-ui.confirm-modal />
+    <x-ui.flash-toasts />
+
+    {{-- ✅ Your global media browser (modal/sheet) --}}
+    <x-media-browser />
 
     @php function_exists('do_action') && do_action('admin_footer'); @endphp
 
