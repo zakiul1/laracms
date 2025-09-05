@@ -20,6 +20,16 @@ use App\Http\Controllers\Admin\MenuLocationController;
 use App\Http\Controllers\Admin\TaxonomyQuickController;
 use App\Http\Controllers\Admin\TagController;
 
+/**
+ * Appearance (core, like WordPress)
+ */
+use App\Http\Controllers\Admin\Appearance\ThemeController;
+use App\Http\Controllers\Admin\Appearance\CustomizerController;
+use App\Http\Controllers\Admin\Appearance\BackgroundController;
+use App\Http\Controllers\Admin\Appearance\HeaderController;
+use App\Http\Controllers\Admin\Appearance\WidgetsController;
+use App\Http\Controllers\Admin\Appearance\ThemeEditorController;
+
 // --------------------------------------------------
 // Public home
 // --------------------------------------------------
@@ -47,8 +57,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     // -------------------------
     // Posts (RESOURCE)
     // -------------------------
-    Route::resource('posts', PostController::class)
-        ->except(['show']); // no /admin/posts/{id}
+    Route::resource('posts', PostController::class)->except(['show']);
 
     // Revisions (Posts)
     Route::get('/posts/{post}/revisions', [PostController::class, 'revisions'])
@@ -60,8 +69,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     // Pages (RESOURCE)
     // -------------------------
     Route::resource('pages', PageController::class)
-        ->except(['show'])                   // no /admin/pages/{id}
-        ->parameters(['pages' => 'post']);   // bind {post} → Post $post
+        ->except(['show'])
+        ->parameters(['pages' => 'post']);
 
     // Revisions (Pages)
     Route::get('/pages/{post}/revisions', [PageController::class, 'revisions'])
@@ -95,7 +104,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         Route::patch('/meta/{media}', [MediaController::class, 'updateMeta'])->name('meta');
         Route::patch('/move/{media}', [MediaController::class, 'moveCategory'])->name('move');
         Route::post('/replace/{media}', [MediaController::class, 'replaceFile'])->name('replace');
-        Route::get('/show/{media}', [MediaController::class, 'show'])->name('show'); // detail JSON
+        Route::get('/show/{media}', [MediaController::class, 'show'])->name('show');
         Route::delete('/{media}', [MediaController::class, 'destroy'])->name('destroy');
         Route::delete('/delete/{media}', [MediaController::class, 'destroy'])->name('delete'); // alias
         Route::post('/restore/{id}', [MediaController::class, 'restore'])->name('restore');
@@ -120,6 +129,58 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
             Route::post('/quick', [MediaCategoryController::class, 'quickStore'])->name('quick');
             Route::post('/quick-create', [MediaCategoryController::class, 'quickStore']); // alias
         });
+    });
+
+    // -------------------------
+    // Appearance (core)
+    // -------------------------
+    Route::prefix('appearance')->name('appearance.')->group(function () {
+        // Themes
+        Route::get('/themes', [ThemeController::class, 'index'])->name('themes.index');
+        Route::post('/themes/upload', [ThemeController::class, 'upload'])->name('themes.upload');
+
+        Route::post('/themes/{theme}/activate', [ThemeController::class, 'activate'])
+            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.activate');
+
+        Route::post('/themes/{theme}/deactivate', [ThemeController::class, 'deactivate'])
+            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.deactivate');
+
+        Route::get('/themes/{theme}/preview', [ThemeController::class, 'preview'])
+            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.preview');
+
+        // Primary destroy route
+        Route::delete('/themes/{theme}', [ThemeController::class, 'destroy'])
+            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.destroy');
+
+        // Alias for backwards compatibility: admin.appearance.themes.delete
+        Route::match(['POST', 'DELETE'], '/themes/{theme}/delete', [ThemeController::class, 'destroy'])
+            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.delete');
+
+        // Widgets (builder + save placements)
+        Route::get('/widgets', [WidgetsController::class, 'index'])->name('widgets.index');
+        Route::post('/widgets/save', [WidgetsController::class, 'save'])->name('widgets.save');
+        Route::post('/widgets/areas', [WidgetsController::class, 'createArea'])->name('widgets.areas.create');
+        Route::patch('/widgets/areas/{area}', [WidgetsController::class, 'updateArea'])->name('widgets.areas.update');
+        Route::delete('/widgets/areas/{area}', [WidgetsController::class, 'destroyArea'])->name('widgets.areas.destroy');
+
+        // Customizer
+        Route::get('/customize', [CustomizerController::class, 'index'])->name('customize');
+        Route::post('/customize', [CustomizerController::class, 'save'])->name('customize.save');
+        Route::get('/customize/preview', [CustomizerController::class, 'preview'])->name('customize.preview');
+
+        // Background & Header
+        Route::get('/background', [BackgroundController::class, 'index'])->name('background');
+        Route::post('/background', [BackgroundController::class, 'save'])->name('background.save');
+
+        Route::get('/header', [HeaderController::class, 'index'])->name('header');
+        Route::post('/header', [HeaderController::class, 'save'])->name('header.save');
+
+        // Theme Editor
+        Route::get('/editor', [ThemeEditorController::class, 'index'])->name('editor.index');
+        Route::get('/editor/tree', [ThemeEditorController::class, 'tree'])->name('editor.tree');
+        Route::get('/editor/open', [ThemeEditorController::class, 'open'])->name('editor.open');
+        Route::post('/editor/save', [ThemeEditorController::class, 'save'])->name('editor.save');
+        Route::post('/editor/validate', [ThemeEditorController::class, 'validateSyntax'])->name('editor.validate');
     });
 
     // -------------------------
@@ -154,7 +215,6 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     // Menus
     // -------------------------
     Route::prefix('menus')->name('menus.')->group(function () {
-        // Menus CRUD
         Route::get('/', [MenuController::class, 'index'])->name('index');
         Route::post('/', [MenuController::class, 'store'])->name('store');
         Route::get('/{menu}/edit', [MenuController::class, 'edit'])->name('edit');

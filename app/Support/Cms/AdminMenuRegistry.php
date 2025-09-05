@@ -48,6 +48,98 @@ class AdminMenuRegistry
             );
         }
 
+        // -------------------- Appearance (core, WP-like) --------------------
+        // Choose the best default landing route for the group (first that exists)
+        $appearanceIndexRoute = null;
+        foreach ([
+            'admin.appearance.themes.index',
+            'admin.appearance.widgets.index',
+            'admin.appearance.customize',
+            'admin.appearance.background',
+            'admin.appearance.header',
+            'admin.appearance.editor.index',
+        ] as $cand) {
+            if (Route::has($cand)) {
+                $appearanceIndexRoute = $cand;
+                break;
+            }
+        }
+
+        if (!$this->has('appearance') && $appearanceIndexRoute) {
+            // Add the group itself
+            $this->add([
+                'key' => 'appearance',
+                'label' => 'Appearance',
+                'icon' => 'lucide-palette',
+                'route' => $appearanceIndexRoute,
+                'order' => 40,
+                'children' => [], // will be merged below
+            ]);
+
+            $order = 10;
+
+            if (Route::has('admin.appearance.themes.index')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.themes',
+                    'label' => 'Themes',
+                    'route' => 'admin.appearance.themes.index',
+                    'order' => $order,
+                ]);
+                $order += 10;
+            }
+
+            if (Route::has('admin.appearance.widgets.index')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.widgets',
+                    'label' => 'Widgets',
+                    'route' => 'admin.appearance.widgets.index',
+                    'order' => $order,
+                ]);
+                $order += 10;
+            }
+
+            if (Route::has('admin.appearance.customize')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.customize',
+                    'label' => 'Customize',
+                    'route' => 'admin.appearance.customize',
+                    'order' => $order,
+                ]);
+                $order += 10;
+            }
+
+            if (Route::has('admin.appearance.background')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.background',
+                    'label' => 'Background',
+                    'route' => 'admin.appearance.background',
+                    'order' => $order,
+                ]);
+                $order += 10;
+            }
+
+            if (Route::has('admin.appearance.header')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.header',
+                    'label' => 'Header',
+                    'route' => 'admin.appearance.header',
+                    'order' => $order,
+                ]);
+                $order += 10;
+            }
+
+            if (Route::has('admin.appearance.editor.index')) {
+                $this->addChild('appearance', [
+                    'key' => 'appearance.editor',
+                    'label' => 'Editor',
+                    'route' => 'admin.appearance.editor.index',
+                    'order' => $order,
+                ]);
+                // $order += 10; // not needed anymore
+            }
+        }
+        // --------------------------------------------------------------------
+
         // Settings
         $this->add([
             'key' => 'settings',
