@@ -30,6 +30,11 @@ use App\Http\Controllers\Admin\Appearance\HeaderController;
 use App\Http\Controllers\Admin\Appearance\WidgetsController;
 use App\Http\Controllers\Admin\Appearance\ThemeEditorController;
 
+/**
+ * Settings
+ */
+use App\Http\Controllers\Admin\Settings\SettingsController;
+
 // --------------------------------------------------
 // Public home
 // --------------------------------------------------
@@ -55,24 +60,18 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     Route::post('ckeditor/upload', [EditorUploadController::class, 'upload'])->name('ckeditor.upload');
 
     // -------------------------
-    // Posts (RESOURCE)
+    // Posts
     // -------------------------
     Route::resource('posts', PostController::class)->except(['show']);
-
-    // Revisions (Posts)
     Route::get('/posts/{post}/revisions', [PostController::class, 'revisions'])
         ->whereNumber('post')->name('posts.revisions');
     Route::post('/posts/{post}/revisions/{revision}/restore', [PostController::class, 'restoreRevision'])
         ->whereNumber('post')->whereNumber('revision')->name('posts.revisions.restore');
 
     // -------------------------
-    // Pages (RESOURCE)
+    // Pages
     // -------------------------
-    Route::resource('pages', PageController::class)
-        ->except(['show'])
-        ->parameters(['pages' => 'post']);
-
-    // Revisions (Pages)
+    Route::resource('pages', PageController::class)->except(['show'])->parameters(['pages' => 'post']);
     Route::get('/pages/{post}/revisions', [PageController::class, 'revisions'])
         ->whereNumber('post')->name('pages.revisions');
     Route::post('/pages/{post}/revisions/{revision}/restore', [PageController::class, 'restoreRevision'])
@@ -91,7 +90,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     Route::post('/taxonomies/category/quick', [TaxonomyQuickController::class, 'quickCategory'])
         ->name('taxonomies.category.quick');
 
-    // Tag suggest (autocomplete in editor)
+    // Tag suggest (autocomplete)
     Route::get('/tags/suggest', [TagController::class, 'suggest'])->name('tags.suggest');
 
     // -------------------------
@@ -110,7 +109,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         Route::post('/restore/{id}', [MediaController::class, 'restore'])->name('restore');
         Route::delete('/force/{id}', [MediaController::class, 'forceDelete'])->name('force');
 
-        // Bulk actions
+        // ✅ Bulk actions (the missing ones)
         Route::post('/bulk-delete', [MediaController::class, 'bulkDelete'])->name('bulk-delete');
         Route::post('/bulk-restore', [MediaController::class, 'bulkRestore'])->name('bulk-restore');
         Route::post('/bulk-force-delete', [MediaController::class, 'bulkForceDelete'])->name('bulk-force');
@@ -132,36 +131,98 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
     });
 
     // -------------------------
-    // Appearance (core)
+    // Menus (FULL MODULE)
+    // -------------------------
+    Route::prefix('menus')->name('menus.')->group(function () {
+        // Menus CRUD
+        Route::get('/', [MenuController::class, 'index'])->name('index');
+        Route::post('/', [MenuController::class, 'store'])->name('store');
+        Route::get('/{menu}/edit', [MenuController::class, 'edit'])->whereNumber('menu')->name('edit');
+        Route::patch('/{menu}', [MenuController::class, 'update'])->whereNumber('menu')->name('update');
+        Route::delete('/{menu}', [MenuController::class, 'destroy'])->whereNumber('menu')->name('destroy');
+
+        // Menu Items (tree CRUD + reorder)
+        Route::get('/{menu}/items', [MenuItemController::class, 'index'])->whereNumber('menu')->name('items.index');
+        Route::post('/{menu}/items', [MenuItemController::class, 'store'])->whereNumber('menu')->name('items.store');
+        Route::patch('/{menu}/items/{item}', [MenuItemController::class, 'update'])
+            ->whereNumber('menu')->whereNumber('item')->name('items.update');
+        Route::delete('/{menu}/items/{item}', [MenuItemController::class, 'destroy'])
+            ->whereNumber('menu')->whereNumber('item')->name('items.destroy');
+
+        // Reorder nested items
+        Route::post('/{menu}/items/reorder', [MenuItemController::class, 'reorder'])
+            ->whereNumber('menu')->name('items.reorder');
+
+        // Optional utilities
+        Route::post('/{menu}/items/{item}/toggle', [MenuItemController::class, 'toggle'])
+            ->whereNumber('menu')->whereNumber('item')->name('items.toggle');
+        Route::post('/{menu}/items/{item}/clone', [MenuItemController::class, 'clone'])
+            ->whereNumber('menu')->whereNumber('item')->name('items.clone');
+
+        // Sources for item pickers
+        Route::get('/sources/pages', [MenuItemController::class, 'sourcePages'])->name('sources.pages');
+        Route::get('/sources/posts', [MenuItemController::class, 'sourcePosts'])->name('sources.posts');
+        Route::get('/sources/terms/{taxonomy?}', [MenuItemController::class, 'sourceTerms'])->name('sources.terms');
+
+        // Locations
+        Route::get('/locations', [MenuLocationController::class, 'index'])->name('locations');
+        Route::post('/locations', [MenuLocationController::class, 'save'])->name('locations.save');
+    });
+
+    // -------------------------
+    // Appearance
     // -------------------------
     Route::prefix('appearance')->name('appearance.')->group(function () {
         // Themes
         Route::get('/themes', [ThemeController::class, 'index'])->name('themes.index');
         Route::post('/themes/upload', [ThemeController::class, 'upload'])->name('themes.upload');
+        Route::post('/themes/{slug}/activate', [ThemeController::class, 'activate'])
+            ->where('slug', '[A-Za-z0-9\-_]+')->name('themes.activate');
+        Route::post('/themes/{slug}/deactivate', [ThemeController::class, 'deactivate'])
+            ->where('slug', '[A-Za-z0-9\-_]+')->name('themes.deactivate');
+        Route::get('/themes/{slug}/preview', [ThemeController::class, 'preview'])
+            ->where('slug', '[A-Za-z0-9\-_]+')->name('themes.preview');
+        Route::delete('/themes/{slug}', [ThemeController::class, 'destroy'])
+            ->where('slug', '[A-Za-z0-9\-_]+')->name('themes.destroy');
+        Route::match(['POST', 'DELETE'], '/themes/{slug}/delete', [ThemeController::class, 'destroy'])
+            ->where('slug', '[A-Za-z0-9\-_]+')->name('themes.delete');
 
-        Route::post('/themes/{theme}/activate', [ThemeController::class, 'activate'])
-            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.activate');
+        // Widgets
+        Route::prefix('widgets')->name('widgets.')->group(function () {
+            Route::get('/', [WidgetsController::class, 'index'])->name('index');
 
-        Route::post('/themes/{theme}/deactivate', [ThemeController::class, 'deactivate'])
-            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.deactivate');
+            // Areas
+            Route::post('/areas', [WidgetsController::class, 'storeArea'])->name('areas.store');
+            Route::patch('/areas/{area}', [WidgetsController::class, 'updateArea'])
+                ->whereNumber('area')->name('areas.update');
+            Route::delete('/areas/{area}', [WidgetsController::class, 'destroyArea'])
+                ->whereNumber('area')->name('areas.delete');
 
-        Route::get('/themes/{theme}/preview', [ThemeController::class, 'preview'])
-            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.preview');
+            // Paginated listing for “Load more”
+            Route::get('/areas/{area}/list', [WidgetsController::class, 'list'])
+                ->whereNumber('area')->name('areas.list');
 
-        // Primary destroy route
-        Route::delete('/themes/{theme}', [ThemeController::class, 'destroy'])
-            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.destroy');
+            // Widgets
+            Route::post('/', [WidgetsController::class, 'store'])->name('store');
+            Route::patch('/{widget}', [WidgetsController::class, 'update'])
+                ->whereNumber('widget')->name('update');
+            Route::post('/{widget}/toggle', [WidgetsController::class, 'toggle'])
+                ->whereNumber('widget')->name('toggle');
+            Route::post('/{widget}/clone', [WidgetsController::class, 'clone'])
+                ->whereNumber('widget')->name('clone');
+            Route::delete('/{widget}', [WidgetsController::class, 'destroy'])
+                ->whereNumber('widget')->name('delete');
 
-        // Alias for backwards compatibility: admin.appearance.themes.delete
-        Route::match(['POST', 'DELETE'], '/themes/{theme}/delete', [ThemeController::class, 'destroy'])
-            ->where('theme', '[A-Za-z0-9\-_]+')->name('themes.delete');
+            // Ordering
+            Route::post('/reorder', [WidgetsController::class, 'reorder'])->name('reorder');
 
-        // Widgets (builder + save placements)
-        Route::get('/widgets', [WidgetsController::class, 'index'])->name('widgets.index');
-        Route::post('/widgets/save', [WidgetsController::class, 'save'])->name('widgets.save');
-        Route::post('/widgets/areas', [WidgetsController::class, 'createArea'])->name('widgets.areas.create');
-        Route::patch('/widgets/areas/{area}', [WidgetsController::class, 'updateArea'])->name('widgets.areas.update');
-        Route::delete('/widgets/areas/{area}', [WidgetsController::class, 'destroyArea'])->name('widgets.areas.destroy');
+            // Live preview
+            Route::post('/preview', [WidgetsController::class, 'preview'])->name('preview');
+
+            // Export / Import
+            Route::get('/export', [WidgetsController::class, 'export'])->name('export');
+            Route::post('/import', [WidgetsController::class, 'import'])->name('import');
+        });
 
         // Customizer
         Route::get('/customize', [CustomizerController::class, 'index'])->name('customize');
@@ -181,6 +242,41 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         Route::get('/editor/open', [ThemeEditorController::class, 'open'])->name('editor.open');
         Route::post('/editor/save', [ThemeEditorController::class, 'save'])->name('editor.save');
         Route::post('/editor/validate', [ThemeEditorController::class, 'validateSyntax'])->name('editor.validate');
+    });
+
+    // -------------------------
+    // Settings (tabs)
+    // -------------------------
+    Route::prefix('settings')->name('settings.')->group(function () {
+        // Hub
+        Route::get('/', [SettingsController::class, 'index'])->name('index');
+
+        // Explicit core tabs
+        $pages = ['general', 'writing', 'reading', 'discussion', 'media', 'permalinks', 'privacy'];
+        foreach ($pages as $p) {
+            Route::get("/{$p}", [SettingsController::class, 'show'])
+                ->defaults('page', $p)->name($p);
+            Route::post("/{$p}/save", [SettingsController::class, 'save'])
+                ->defaults('page', $p)->name("{$p}.save");
+            Route::post("/{$p}/validate", [SettingsController::class, 'validatePage'])
+                ->defaults('page', $p)->name("{$p}.validate");
+            Route::post("/{$p}/defaults", [SettingsController::class, 'restoreDefaults'])
+                ->defaults('page', $p)->name("{$p}.defaults");
+        }
+
+        // Dynamic fallback for plugin-added pages
+        Route::get('/{page}', [SettingsController::class, 'show'])
+            ->where('page', '[A-Za-z0-9\-_]+')->name('show');
+        Route::post('/{page}/save', [SettingsController::class, 'save'])
+            ->where('page', '[A-Za-z0-9\-_]+')->name('save');
+        Route::post('/{page}/validate', [SettingsController::class, 'validatePage'])
+            ->where('page', '[A-Za-z0-9\-_]+')->name('validate');
+        Route::post('/{page}/defaults', [SettingsController::class, 'restoreDefaults'])
+            ->where('page', '[A-Za-z0-9\-_]+')->name('defaults');
+
+        // Import/Export (global)
+        Route::get('/export/json', [SettingsController::class, 'export'])->name('export');
+        Route::post('/import/json', [SettingsController::class, 'import'])->name('import');
     });
 
     // -------------------------
@@ -209,33 +305,6 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         // Export / Delete
         Route::get('/{plugin}/export', [PluginController::class, 'export'])->name('export');
         Route::delete('/{plugin}', [PluginController::class, 'destroy'])->name('destroy');
-    });
-
-    // -------------------------
-    // Menus
-    // -------------------------
-    Route::prefix('menus')->name('menus.')->group(function () {
-        Route::get('/', [MenuController::class, 'index'])->name('index');
-        Route::post('/', [MenuController::class, 'store'])->name('store');
-        Route::get('/{menu}/edit', [MenuController::class, 'edit'])->name('edit');
-        Route::patch('/{menu}', [MenuController::class, 'update'])->name('update');
-        Route::delete('/{menu}', [MenuController::class, 'destroy'])->name('destroy');
-
-        // Drag & drop reorder (nested tree JSON)
-        Route::post('/{menu}/reorder', [MenuController::class, 'reorder'])->name('reorder');
-
-        // Menu items
-        Route::post('/{menu}/items/custom', [MenuItemController::class, 'storeCustom'])->name('items.custom.store');
-        Route::post('/{menu}/items/bulk', [MenuItemController::class, 'storeBulk'])->name('items.bulk.store');
-        Route::patch('/{menu}/items/{item}', [MenuItemController::class, 'update'])->name('items.update');
-        Route::delete('/{menu}/items/{item}', [MenuItemController::class, 'destroy'])->name('items.destroy');
-
-        // Assign locations from the menu edit screen
-        Route::post('/{menu}/assign-locations', [MenuController::class, 'assignLocations'])->name('assign');
-
-        // Locations screen
-        Route::get('/locations', [MenuLocationController::class, 'index'])->name('locations.index');
-        Route::post('/locations', [MenuLocationController::class, 'update'])->name('locations.update');
     });
 });
 

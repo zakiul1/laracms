@@ -34,5 +34,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Module loader after hooks
         App\Providers\ModuleServiceProvider::class,
+        App\Providers\WidgetServiceProvider::class,
+        App\Providers\SettingsServiceProvider::class,
+
     ])
     ->create();

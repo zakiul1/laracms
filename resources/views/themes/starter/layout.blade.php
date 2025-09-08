@@ -48,6 +48,7 @@
     @includeIf("themes.$activeTheme.partials.nav")
 
     <main class="min-h-screen">
+        Jibon asdfaaaaaaaaaaaaaaaaaaaaa
         @yield('content')
     </main>
 

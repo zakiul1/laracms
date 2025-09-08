@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin\Appearance;
 
 use App\Http\Controllers\Controller;
+use App\Support\Appearance\ThemeManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -14,45 +15,74 @@ class ThemeController extends Controller
     /**
      * List installed themes + mark the active one.
      */
-    public function index(Request $request)
+    public function index(Request $request, ThemeManager $themes)
     {
-        $themes = $this->scanThemes();
+        // Themes discovered in base themes path
+        $baseList = $themes->list(); // [ ['name','slug','version','author','path','metadata'], ... ]
+        $map = [];
 
-        // Determine active theme: DB → file → config
-        $active = (string) config('laracms.active_theme', 'laracms');
+        foreach ($baseList as $t) {
+            $slug = $t['slug'];
+            $basePath = $t['path'];
+            $views = is_dir($basePath . '/views') ? ($basePath . '/views') : $basePath;
 
-        $dbActive = null;
-        try {
-            $dbActive = DB::table('themes')->where('status', 'active')->value('slug');
-        } catch (\Throwable $e) {
-            // ignore, we'll use file fallback below
+            $map[$slug] = [
+                'slug' => $slug,
+                'name' => $t['name'],
+                'paths' => [$basePath],
+                'path' => $basePath,
+                'views' => $views,
+                'screenshot' => $this->findScreenshotUrl($slug, $basePath),
+                'meta' => $t['metadata'] ?? [],
+                'version' => $t['metadata']['version'] ?? ($t['version'] ?? null),
+                'author' => $t['metadata']['author'] ?? ($t['author'] ?? null),
+                'description' => $t['metadata']['description'] ?? null,
+            ];
         }
 
-        if ($dbActive) {
-            $active = $dbActive;
-        } else {
-            // ✅ also check the file when DB returned null OR threw
-            $file = storage_path('app/appearance_active_theme.txt');
-            if (is_file($file)) {
-                $slugFromFile = trim((string) @file_get_contents($file));
-                if ($slugFromFile !== '') {
-                    $active = $slugFromFile;
+        // Also scan resources/views/themes for additional themes
+        $resRoot = resource_path('views/themes');
+        if (is_dir($resRoot)) {
+            foreach (scandir($resRoot) ?: [] as $entry) {
+                if ($entry === '.' || $entry === '..')
+                    continue;
+                $dir = $resRoot . DIRECTORY_SEPARATOR . $entry;
+                if (!is_dir($dir))
+                    continue;
+
+                $slug = Str::slug($entry);
+                if (!isset($map[$slug])) {
+                    $info = $this->readTheme($slug, $dir);
+                    $map[$slug] = $info;
+                } else {
+                    // augment paths/screenshots if not present yet
+                    $map[$slug]['paths'][] = $dir;
+                    if (!$map[$slug]['screenshot']) {
+                        $map[$slug]['screenshot'] = $this->findScreenshotUrl($slug, $dir);
+                    }
                 }
             }
         }
 
-        // Decorate themes for the blade and soft-sync DB (if present)
-        foreach ($themes as $slug => &$t) {
+        ksort($map);
+        $active = $themes->activeSlug();
+
+        // Decorate statuses
+        foreach ($map as $slug => &$t) {
             $t['status'] = ($slug === $active) ? 'active' : 'installed';
-            $t['version'] = $t['meta']['version'] ?? null;
-            $t['author'] = $t['meta']['author'] ?? null;
-            $t['description'] = $t['meta']['description'] ?? null;
             $t['screenshot_url'] = $t['screenshot'] ?? null;
         }
         unset($t);
 
+        // Soft-sync DB table (if present)
         try {
-            foreach ($themes as $slug => $t) {
+            $themes->syncDb();
+            // ensure status reflects current active
+            DB::table('themes')->update(['status' => 'installed']);
+            DB::table('themes')->where('slug', $active)->update(['status' => 'active']);
+
+            // keep basic metadata in sync
+            foreach ($map as $slug => $t) {
                 DB::table('themes')->updateOrInsert(
                     ['slug' => $slug],
                     [
@@ -63,72 +93,43 @@ class ThemeController extends Controller
                 );
             }
         } catch (\Throwable $e) {
-            // DB not required
+            // DB table may not exist yet; ignore
         }
 
         return view('admin.appearance.themes.index', [
-            'themes' => $themes,
+            'themes' => $map,
             'active' => $active,
         ]);
     }
 
-
     /**
-     * Activate a theme: DB if available + file fallback + runtime config.
+     * Activate a theme: uses ThemeManager for DB/cache/namespace rebinding.
      */
-    public function activate(Request $request, string $slug)
+    public function activate(Request $request, string $slug, ThemeManager $themes)
     {
-        $themes = $this->scanThemes();
-        abort_unless(isset($themes[$slug]), 404, 'Theme not found');
+        abort_unless($themes->themeExists($slug), 404, 'Theme not found');
 
-        // Persist in DB when available
-        try {
-            DB::transaction(function () use ($slug, $themes) {
-                DB::table('themes')->update(['status' => 'inactive']);
-                DB::table('themes')->updateOrInsert(
-                    ['slug' => $slug],
-                    [
-                        'name' => $themes[$slug]['name'],
-                        'status' => 'active',
-                        'metadata' => json_encode($themes[$slug]['meta'] ?? []),
-                    ]
-                );
-            });
-        } catch (\Throwable $e) {
-        }
+        // Activate + rebind namespace (immediate effect)
+        $themes->activate($slug);
 
-        // File fallback (so the ServiceProvider picks it up immediately)
-        try {
-            Storage::disk('local')->put('appearance_active_theme.txt', $slug);
-        } catch (\Throwable $e) {
-        }
-
-        // Runtime
-        config(['laracms.active_theme' => $slug]);
-
-        return back()->with('success', "Theme “{$themes[$slug]['name']}” is now active.");
+        return back()->with('success', "Theme “{$slug}” is now active.");
     }
 
     /**
-     * Optional: set all inactive and fall back to default.
+     * Deactivate: switch back to default theme.
      */
-    public function deactivate(Request $request, string $slug)
+    public function deactivate(Request $request, string $slug, \App\Support\Appearance\ThemeManager $themes)
     {
-        $default = (string) config('laracms.default_theme', config('laracms.active_theme', 'laracms'));
-
-        try {
-            DB::table('themes')->update(['status' => 'inactive']);
-        } catch (\Throwable $e) {
-        }
-        try {
-            Storage::disk('local')->put('appearance_active_theme.txt', $default);
-        } catch (\Throwable $e) {
+        // Only allow if the given slug is currently active; otherwise it's a no-op
+        if ($slug !== $themes->activeSlug()) {
+            return back()->with('warning', 'That theme is not currently active.');
         }
 
-        config(['laracms.active_theme' => $default]);
+        $themes->deactivateAll();
 
-        return back()->with('success', 'Theme deactivated.');
+        return back()->with('success', 'Theme deactivated. No theme is active now.');
     }
+
 
     /**
      * Preview using ?__theme=slug (ThemeServiceProvider honors this for logged-in users).
@@ -139,56 +140,55 @@ class ThemeController extends Controller
     }
 
     /**
-     * Upload stub (accepts "zip" or "theme_zip" input names).
+     * Upload and install a theme ZIP.
      */
-    public function upload(Request $request)
+    public function upload(Request $request, ThemeManager $themes)
     {
-        // Accept either field name
         $file = $request->file('zip') ?? $request->file('theme_zip');
         abort_unless($file, 422, 'No file provided');
 
-        $request->validate([
-            $file->getClientOriginalName() => 'nullable', // noop to keep Validator happy
-        ]);
         if (strtolower($file->getClientOriginalExtension()) !== 'zip') {
             return back()->with('error', 'Please upload a .zip file.');
         }
 
-        // TODO: unzip to a theme root and then redirect.
-        return back()->with('success', 'Theme uploaded (install/unzip not implemented yet).');
+        // Save to a temp location then install
+        $tmp = $file->storeAs('tmp', 'theme-' . time() . '-' . Str::random(6) . '.zip', 'local');
+        $full = storage_path('app/' . $tmp);
+
+        try {
+            $slug = $themes->installZip($full);
+            @unlink($full);
+            return back()->with('success', "Theme “{$slug}” uploaded. You can activate it now.");
+        } catch (\Throwable $e) {
+            @unlink($full);
+            return back()->with('error', 'Failed to install theme zip: ' . $e->getMessage());
+        }
     }
 
     /**
      * Delete a theme (not the active one).
      */
-    public function destroy(string $slug)
+    public function destroy(string $slug, ThemeManager $themes)
     {
-        // Guard active
-        $active = (string) config('laracms.active_theme', 'laracms');
-        try {
-            $dbActive = DB::table('themes')->where('status', 'active')->value('slug');
-            if ($dbActive)
-                $active = $dbActive;
-        } catch (\Throwable $e) {
-            $file = storage_path('app/appearance_active_theme.txt');
-            if (is_file($file)) {
-                $fileActive = trim((string) @file_get_contents($file));
-                if ($fileActive !== '')
-                    $active = $fileActive;
-            }
-        }
-        if ($slug === $active) {
+        if ($slug === $themes->activeSlug()) {
             return back()->with('error', 'Cannot delete the active theme.');
         }
 
-        // Delete all actual matching folders (slug of folder name)
-        $paths = $this->actualThemeDirsFor($slug);
         $deletedAny = false;
-        foreach ($paths as $p) {
-            if (is_dir($p)) {
-                File::deleteDirectory($p);
-                $deletedAny = true;
-            }
+
+        // Try manager deletion (base themes path)
+        try {
+            $themes->delete($slug);
+            $deletedAny = true;
+        } catch (\Throwable $e) {
+            // ignore; we’ll also try resource cleanup below
+        }
+
+        // Also clean resource/views/themes/{slug} if present
+        $resPath = resource_path('views/themes/' . $slug);
+        if (is_dir($resPath)) {
+            File::deleteDirectory($resPath);
+            $deletedAny = true;
         }
 
         // Clean published screenshots
@@ -214,65 +214,6 @@ class ThemeController extends Controller
 
     /* ------------------------- Helpers ------------------------- */
 
-    protected function themeSearchRoots(): array
-    {
-        return [
-            resource_path('themes'),
-            base_path('themes'),
-            base_path('Modules/Appearance/Themes'),
-            resource_path('views/themes'),
-        ];
-    }
-
-    protected function actualThemeDirsFor(string $slug): array
-    {
-        $found = [];
-        foreach ($this->themeSearchRoots() as $root) {
-            if (!is_dir($root))
-                continue;
-            foreach (scandir($root) ?: [] as $entry) {
-                if ($entry === '.' || $entry === '..')
-                    continue;
-                $dir = $root . DIRECTORY_SEPARATOR . $entry;
-                if (!is_dir($dir))
-                    continue;
-                if (Str::slug($entry) === Str::slug($slug)) {
-                    $found[] = $dir;
-                }
-            }
-        }
-        return $found;
-    }
-
-    protected function scanThemes(): array
-    {
-        $themes = [];
-        foreach ($this->themeSearchRoots() as $root) {
-            if (!is_dir($root))
-                continue;
-
-            foreach (scandir($root) ?: [] as $entry) {
-                if ($entry === '.' || $entry === '..')
-                    continue;
-                $dir = $root . DIRECTORY_SEPARATOR . $entry;
-                if (!is_dir($dir))
-                    continue;
-
-                $slug = Str::slug($entry);
-                if (!isset($themes[$slug])) {
-                    $themes[$slug] = $this->readTheme($slug, $dir);
-                } else {
-                    $themes[$slug]['paths'][] = $dir;
-                    if (!$themes[$slug]['screenshot']) {
-                        $themes[$slug]['screenshot'] = $this->findScreenshotUrl($slug, $dir);
-                    }
-                }
-            }
-        }
-        ksort($themes);
-        return $themes;
-    }
-
     protected function readTheme(string $slug, string $path): array
     {
         $meta = [
@@ -286,8 +227,9 @@ class ThemeController extends Controller
         if (is_file($json)) {
             try {
                 $data = json_decode(file_get_contents($json), true, flags: JSON_THROW_ON_ERROR);
-                if (is_array($data))
+                if (is_array($data)) {
                     $meta = array_merge($meta, array_intersect_key($data, $meta));
+                }
             } catch (\Throwable $e) {
             }
         }
@@ -296,8 +238,9 @@ class ThemeController extends Controller
         if (is_file($php)) {
             try {
                 $arr = include $php;
-                if (is_array($arr))
+                if (is_array($arr)) {
                     $meta = array_merge($meta, array_intersect_key($arr, $meta));
+                }
             } catch (\Throwable $e) {
             }
         }
@@ -314,6 +257,9 @@ class ThemeController extends Controller
             'views' => $views,
             'screenshot' => $this->findScreenshotUrl($slug, $path),
             'meta' => $meta,
+            'version' => $meta['version'] ?? null,
+            'author' => $meta['author'] ?? null,
+            'description' => $meta['description'] ?? null,
         ];
     }
 
@@ -321,8 +267,9 @@ class ThemeController extends Controller
     {
         foreach (['png', 'jpg', 'jpeg', 'webp'] as $ext) {
             $file = $path . DIRECTORY_SEPARATOR . 'screenshot.' . $ext;
-            if (is_file($file))
+            if (is_file($file)) {
                 return $this->publishScreenshot($slug, $file, $ext);
+            }
         }
         return null;
     }
@@ -343,8 +290,9 @@ class ThemeController extends Controller
             }
 
             if ($needsCopy) {
-                if (!$disk->exists($dir))
+                if (!$disk->exists($dir)) {
                     $disk->makeDirectory($dir);
+                }
                 $disk->put($target, file_get_contents($absolute));
             }
 

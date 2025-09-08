@@ -9,10 +9,10 @@ return new class extends Migration {
     {
         Schema::create('widget_areas', function (Blueprint $t) {
             $t->id();
-            $t->string('name');
-            $t->string('slug')->unique();
-            $t->string('theme')->nullable();      // tie areas to a theme
-            $t->text('description')->nullable();
+            $t->string('name', 120);
+            $t->string('slug', 140)->unique();           // global unique (simple)
+            $t->string('description', 255)->nullable();
+            $t->string('theme', 120)->nullable();        // null = global
             $t->timestamps();
         });
     }

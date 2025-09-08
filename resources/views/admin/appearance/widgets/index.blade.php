@@ -2,187 +2,137 @@
 
 @section('content')
     @php
-        use Illuminate\Support\Facades\Route as R;
-
-        // Fallbacks so this view never crashes if routes aren’t ready yet
-        $hasStore = R::has('admin.appearance.widgets.store');
-        $hasUpdate = R::has('admin.appearance.widgets.update');
-        $hasDestroy = R::has('admin.appearance.widgets.destroy');
-        $hasCustomize = R::has('admin.appearance.customizer');
-
-        // Tolerant inputs from controller; provide sane defaults so page loads
-        $availableWidgets = $availableWidgets ?? [
-            ['type' => 'text', 'label' => 'Text'],
-            ['type' => 'html', 'label' => 'Custom HTML'],
-            ['type' => 'menu', 'label' => 'Menu'],
-            ['type' => 'recent', 'label' => 'Recent Posts'],
-            ['type' => 'categories', 'label' => 'Categories'],
-        ];
-
-        // $areas can be array or collection; each area should have: id, name, slug, description
-        // and optionally ->widgets (array/collection of placed widgets with id,type,settings)
-        $areas = $areas ?? collect([]);
+        $types = [];
+        foreach ($registry ?? [] as $key => $class) {
+            $types[$key] = $class::label();
+        }
     @endphp
 
-    <div class="flex items-center justify-between mb-4">
-        <h1 class="text-xl font-semibold">Widgets</h1>
+    <h1 class="text-xl font-semibold mb-4">Widgets</h1>
 
-        @if ($hasCustomize)
-            <a href="{{ route('admin.appearance.customizer') }}"
-                class="px-3 py-2 rounded-radius bg-primary text-white text-sm">
-                Customize
-            </a>
-        @endif
-    </div>
+    <div x-data="wpWidgets({
+        endpoints: {
+            store: '{{ route('admin.appearance.widgets.store') }}',
+            update: '{{ route('admin.appearance.widgets.update', 0) }}',
+            toggle: '{{ route('admin.appearance.widgets.toggle', 0) }}',
+            clone: '{{ route('admin.appearance.widgets.clone', 0) }}',
+            delete: '{{ route('admin.appearance.widgets.delete', 0) }}',
+            reorder: '{{ route('admin.appearance.widgets.reorder') }}',
+            listArea: '{{ route('admin.appearance.widgets.areas.list', 0) }}',
+            deleteArea: '{{ route('admin.appearance.widgets.areas.delete', 0) }}',
+        },
+        csrf: '{{ csrf_token() }}'
+    })" class="grid grid-cols-1 lg:grid-cols-12 gap-5">
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {{-- Left: Available widgets --}}
-        <section class="lg:col-span-1 rounded-radius border border-outline dark:border-outline-dark">
-            <div class="p-3 border-b border-outline dark:border-outline-dark">
-                <h2 class="font-medium">Available Widgets</h2>
-            </div>
+        {{-- Available Widgets (left) --}}
+        <div class="lg:col-span-5">
+            <div class="border rounded bg-white lg:sticky lg:top-4">
+                <div class="px-3 py-2 border-b font-medium">Available Widgets</div>
 
-            <ul class="p-3 space-y-2">
-                @foreach ($availableWidgets as $w)
-                    <li class="border rounded-radius px-3 py-2 flex items-center justify-between">
-                        <div class="text-sm">
-                            <div class="font-medium">{{ $w['label'] ?? ucfirst($w['type']) }}</div>
-                            <div class="text-[11px] opacity-60">{{ $w['type'] }}</div>
-                        </div>
-                        <span class="text-[11px] opacity-60">drag or add →</span>
-                    </li>
-                @endforeach
-            </ul>
-        </section>
+                {{-- local x-data only for filtering palette --}}
+                <div x-data="{ filter: '' }" class="p-3 space-y-2">
+                    <input type="search" x-model="filter" class="w-full rounded border px-2 py-1 text-sm"
+                        placeholder="Search widgets…">
 
-        {{-- Right: Widget Areas --}}
-        <section class="lg:col-span-2 space-y-4">
-            @forelse ($areas as $area)
-                @php
-                    $areaWidgets = collect(data_get($area, 'widgets', []));
-                @endphp
-
-                <div class="rounded-radius border border-outline dark:border-outline-dark overflow-hidden">
-                    <div
-                        class="p-3 border-b border-outline dark:border-outline-dark bg-surface-alt dark:bg-surface-dark-alt">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <h3 class="font-semibold">{{ data_get($area, 'name', 'Sidebar') }}</h3>
-                                <div class="text-[11px] opacity-60">
-                                    {{ data_get($area, 'description', data_get($area, 'slug', '')) }}
+                    <div class="space-y-2 widget-palette max-h-[70vh] overflow-y-auto pr-1" x-ref="palette">
+                        @foreach ($types as $key => $label)
+                            <div class="border rounded px-3 py-2 bg-surface-alt cursor-move" data-type="{{ $key }}"
+                                :class="{ 'hidden': !('{{ Str::lower($label . ' ' . $key) }}'.includes(filter.toLowerCase())) }"
+                                data-label="{{ $label }} {{ $key }}" title="{{ $label }}">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="font-medium text-sm">{{ $label }}</div>
+                                        <div class="text-[11px] opacity-60">{{ $key }}</div>
+                                    </div>
+                                    <div class="text-[11px] opacity-60">drag or add →</div>
                                 </div>
                             </div>
-                            @if ($hasStore)
-                                <form method="POST" action="{{ route('admin.appearance.widgets.store') }}"
-                                    class="flex items-center gap-2">
-                                    @csrf
-                                    <input type="hidden" name="area_id" value="{{ data_get($area, 'id') }}">
-                                    <select name="type"
-                                        class="border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm dark:border-outline-dark dark:bg-surface-dark/50">
-                                        @foreach ($availableWidgets as $w)
-                                            <option value="{{ $w['type'] }}">{{ $w['label'] ?? ucfirst($w['type']) }}
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                    <button class="px-3 py-1.5 rounded-radius border border-outline text-sm">
-                                        Add Widget
-                                    </button>
-                                </form>
-                            @endif
+                        @endforeach
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {{-- Widget Areas (right) --}}
+        <div class="lg:col-span-7 space-y-4">
+
+            {{-- Create Widget Area --}}
+            <div class="border rounded bg-white">
+                <div class="px-3 py-2 border-b font-medium">Create Widget Area</div>
+                <form method="POST" action="{{ route('admin.appearance.widgets.areas.store') }}"
+                    class="p-3 grid sm:grid-cols-3 gap-2">
+                    @csrf
+                    <input name="name" required class="rounded border px-2 py-1 text-sm"
+                        placeholder="Area name (e.g. Sidebar)">
+                    <input name="slug" class="rounded border px-2 py-1 text-sm" placeholder="Slug (optional)">
+                    <input name="description" class="rounded border px-2 py-1 text-sm sm:col-span-3"
+                        placeholder="Description (optional)">
+                    <div class="sm:col-span-3">
+                        <button type="submit" class="px-3 py-1.5 rounded border text-sm">Create Area</button>
+                    </div>
+                </form>
+            </div>
+
+            @forelse ($areas as $area)
+                <div class="border rounded bg-white">
+                    {{-- sticky header for each area --}}
+                    <div class="px-3 py-2 border-b flex items-center justify-between sticky top-0 bg-white z-10">
+                        <div>
+                            <div class="font-medium">{{ $area->name }}</div>
+                            <div class="text-xs opacity-70">{{ $area->slug }}</div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <select class="rounded border px-2 py-1 text-sm" x-ref="select-{{ $area->id }}">
+                                @foreach ($types as $key => $label)
+                                    <option value="{{ $key }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
+                            <button type="button" class="px-3 py-1.5 rounded border text-sm"
+                                @click.prevent="addFromSelect({{ $area->id }}, $refs['select-{{ $area->id }}'].value)">
+                                Add Widget
+                            </button>
+                            <button type="button" class="px-3 py-1.5 rounded border text-sm text-red-600"
+                                @click.prevent="deleteArea({{ $area->id }})">
+                                Delete Area
+                            </button>
                         </div>
                     </div>
 
-                    <div class="p-3 space-y-3">
-                        @forelse ($areaWidgets as $inst)
-                            @php
-                                $wid = data_get($inst, 'id');
-                                $wtype = data_get($inst, 'type', 'text');
-                                $label = ucfirst($wtype) . ' Widget';
-                                $settings = (array) data_get($inst, 'settings', []);
-                            @endphp
-                            <div class="rounded-radius border border-outline dark:border-outline-dark">
-                                <div class="p-3 flex items-center justify-between bg-surface-alt dark:bg-surface-dark-alt">
-                                    <div class="text-sm font-medium">{{ $label }}</div>
-                                    <div class="flex items-center gap-2">
-                                        @if ($hasDestroy && $wid)
-                                            <form method="POST"
-                                                action="{{ route('admin.appearance.widgets.destroy', $wid) }}"
-                                                onsubmit="return confirm('Remove this widget?');">
-                                                @csrf @method('DELETE')
-                                                <button class="text-red-600 text-sm hover:underline">Remove</button>
-                                            </form>
-                                        @endif
-                                    </div>
+                    <div class="p-3">
+                        {{-- scrollable list --}}
+                        <div class="space-y-2 widgets-list max-h-[60vh] overflow-y-auto pr-1"
+                            data-area="{{ $area->id }}" data-page="1" data-per="20" x-init="$nextTick(() => setupArea($el, {{ $area->id }}))">
+                            @foreach ($area->widgets as $w)
+                                @include('admin.appearance.widgets.partials.card', ['widget' => $w])
+                            @endforeach
+
+                            @if ($area->widgets->isEmpty())
+                                <div class="text-sm opacity-60 px-1">
+                                    No widgets placed in this area. Drag from the left or use “Add Widget”.
                                 </div>
+                            @endif
+                        </div>
 
-                                {{-- Basic settings form (only shows for known simple widgets).
-                                     Adjust fields per widget type in your controller later. --}}
-                                <div class="p-3">
-                                    @if ($hasUpdate && $wid)
-                                        <form method="POST" action="{{ route('admin.appearance.widgets.update', $wid) }}"
-                                            class="space-y-2">
-                                            @csrf @method('PATCH')
-
-                                            @if ($wtype === 'text')
-                                                <label class="block text-xs">Title</label>
-                                                <input type="text" name="settings[title]"
-                                                    value="{{ $settings['title'] ?? '' }}"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                              dark:border-outline-dark dark:bg-surface-dark/50">
-                                                <label class="block text-xs">Content</label>
-                                                <textarea name="settings[content]" rows="3"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                                 dark:border-outline-dark dark:bg-surface-dark/50">{{ $settings['content'] ?? '' }}</textarea>
-                                            @elseif ($wtype === 'html')
-                                                <label class="block text-xs">HTML</label>
-                                                <textarea name="settings[html]" rows="4"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                                 dark:border-outline-dark dark:bg-surface-dark/50">{{ $settings['html'] ?? '' }}</textarea>
-                                            @elseif ($wtype === 'menu')
-                                                <label class="block text-xs">Menu ID</label>
-                                                <input type="number" name="settings[menu_id]"
-                                                    value="{{ $settings['menu_id'] ?? '' }}"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                              dark:border-outline-dark dark:bg-surface-dark/50">
-                                            @elseif ($wtype === 'recent')
-                                                <label class="block text-xs">Count</label>
-                                                <input type="number" name="settings[count]"
-                                                    value="{{ $settings['count'] ?? 5 }}"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                              dark:border-outline-dark dark:bg-surface-dark/50">
-                                            @elseif ($wtype === 'categories')
-                                                <label class="block text-xs">Show Count</label>
-                                                <select name="settings[show_count]"
-                                                    class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 text-sm
-                                                               dark:border-outline-dark dark:bg-surface-dark/50">
-                                                    <option value="0" @selected(($settings['show_count'] ?? 0) == 0)>No</option>
-                                                    <option value="1" @selected(($settings['show_count'] ?? 0) == 1)>Yes</option>
-                                                </select>
-                                            @endif
-
-                                            <div class="pt-1">
-                                                <button class="px-3 py-1.5 rounded-radius border border-outline text-sm">
-                                                    Save
-                                                </button>
-                                            </div>
-                                        </form>
-                                    @else
-                                        <div class="text-xs opacity-70 p-2">
-                                            (Settings form will appear once widget routes are wired.)
-                                        </div>
-                                    @endif
-                                </div>
-                            </div>
-                        @empty
-                            <div class="text-sm opacity-70">No widgets placed in this area.</div>
-                        @endforelse
+                        <div class="pt-3">
+                            <button type="button" class="border rounded px-3 py-1.5 text-sm"
+                                data-load="{{ $area->id }}" @click.prevent="loadMore({{ $area->id }})">
+                                Load more
+                            </button>
+                        </div>
                     </div>
                 </div>
             @empty
-                <div class="rounded-radius border border-outline dark:border-outline-dark p-6 text-center">
-                    No widget areas registered yet.
+                {{-- Empty state when there are no areas --}}
+                <div class="border rounded bg-white p-4 text-sm opacity-70">
+                    No widget areas yet. Create one above (e.g. <em>Sidebar</em>, <em>Footer</em>), then drag widgets from
+                    the left or use “Add Widget”.
                 </div>
             @endforelse
-        </section>
+        </div>
     </div>
 @endsection
+
+@push('scripts')
+    {{-- Ensure the admin widgets JS is loaded --}}
+    @vite('resources/js/widgets-admin.js')
+@endpush

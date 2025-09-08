@@ -10,10 +10,12 @@ return new class extends Migration {
         Schema::create('widgets', function (Blueprint $t) {
             $t->id();
             $t->foreignId('widget_area_id')->constrained('widget_areas')->cascadeOnDelete();
-            $t->string('type');                   // text, html, menu, recent_posts, categories, Your\Custom\Widget
-            $t->string('title')->nullable();
+            $t->string('type', 80);                      // registry key
+            $t->string('title', 160)->nullable();
             $t->json('settings')->nullable();
-            $t->unsignedInteger('position')->default(0);
+            $t->json('visibility')->nullable();          // {rules:[],mode:"show|hide"}
+            $t->string('status', 16)->default('active'); // active|inactive
+            $t->integer('sort_order')->default(10);
             $t->timestamps();
         });
     }

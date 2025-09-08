@@ -14,7 +14,12 @@ Alpine.plugin(collapse);
 import mediaLib from "./media"; // <-- make sure this path is correct
 Alpine.data("mediaLib", mediaLib); // <-- registers the component by name
 
-// 4) Expose & start Alpine (now that components are registered)
+// 3.1) Widgets admin factory MUST be loaded BEFORE Alpine starts
+// This defines: window.wpWidgets = (cfg) => ({ ... })
+import "./widgets-admin";
+import "./settings";
+
+// 4) Expose & start Alpine (now that components and widgets are registered)
 window.Alpine = Alpine;
 if (!window.Alpine.__started) {
     try {

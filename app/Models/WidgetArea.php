@@ -11,6 +11,6 @@ class WidgetArea extends Model
 
     public function widgets(): HasMany
     {
-        return $this->hasMany(Widget::class)->orderBy('position');
+        return $this->hasMany(Widget::class)->orderBy('sort_order');
     }
 }
