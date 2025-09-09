@@ -37,5 +37,6 @@ return Application::configure(basePath: dirname(__DIR__))
         App\Providers\WidgetServiceProvider::class,
         App\Providers\SettingsServiceProvider::class,
 
+
     ])
     ->create();

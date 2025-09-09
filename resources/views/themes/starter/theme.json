@@ -1,8 +1,40 @@
 {
-  "name": "Starter",
-  "slug": "starter",
+  "name": "My Awesome Theme",
   "version": "1.0.0",
   "author": "You",
-  "description": "Clean Tailwind starter for LaraCMS.",
-  "screenshot": "screenshot.png"
+  "customize": {
+    "panels": [
+      {
+        "title": "Site Identity",
+        "fields": [
+          { "key": "general.site_title", "label": "Site Title", "type": "text", "default": "Laracms" },
+          { "key": "general.logo", "label": "Logo URL", "type": "image", "default": null }
+        ]
+      },
+      {
+        "title": "Colors",
+        "fields": [
+          { "key": "colors.primary", "label": "Primary", "type": "color", "default": "#2563eb" },
+          { "key": "colors.accent", "label": "Accent", "type": "color", "default": "#10b981" }
+        ]
+      },
+      {
+        "title": "Typography",
+        "fields": [
+          { "key": "typography.heading", "label": "Heading Font", "type": "text", "default": "Inter" },
+          { "key": "typography.body", "label": "Body Font", "type": "text", "default": "Inter" }
+        ]
+      }
+    ],
+    "cssVars": {
+      "--theme-primary": "colors.primary",
+      "--theme-accent": "colors.accent",
+      "--font-heading": "typography.heading",
+      "--font-body": "typography.body"
+    },
+    "liveBindings": {
+      "#title:text": "general.site_title",
+      "#logo:src": "general.logo"
+    }
+  }
 }

@@ -44,17 +44,42 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Ensure "theme::" always points to the current active theme for this request.
-        /** @var ThemeManager $themes */
-        $themes = $this->app->make(ThemeManager::class);
-        $themes->rebindViewNamespace();
+        // --- Theme namespace binding (SAFE before migrations) ---
+        try {
+            /** @var ThemeManager $themes */
+            $themes = $this->app->make(ThemeManager::class);
 
-        // Handy in blades: {{ $activeTheme }}
-        View::share('activeTheme', $themes->activeSlug());
+            // ThemeManager::activeSlug() is table-safe (we updated it).
+            $themes->rebindViewNamespace();
+
+            // Share slug + rich info (safe if table not ready -> slug '')
+            View::share('activeTheme', $themes->activeSlug());
+            try {
+                View::share('activeThemeInfo', $themes->active()); // ['name','slug','version','author','paths','metadata','screenshot'] or null
+            } catch (\Throwable $ignored) {
+                View::share('activeThemeInfo', null);
+            }
+        } catch (\Throwable $e) {
+            // During early boot (composer scripts / pre-migration), fall back cleanly
+            View::share('activeTheme', '');
+            View::share('activeThemeInfo', null);
+            try {
+                View::replaceNamespace('theme', [resource_path('views/theme-fallback')]);
+                app('view.finder')->flush();
+            } catch (\Throwable $ignored) {
+            }
+        }
 
         // NEW: @setting('general.site_title') directive
         Blade::directive('setting', function ($key) {
             return "<?php echo e(app(\\App\\Support\\Settings\\Settings::class)->get($key)); ?>";
+        });
+
+        // NEW: @themeCssVars -> inject saved Customizer CSS variables (safe if Customizer missing)
+        Blade::directive('themeCssVars', function () {
+            // Use a plain string to avoid heredoc parse issues
+            return
+                "<?php try { echo app(\\App\\Support\\Appearance\\Customizer::class)->renderCssVars(); } catch (\\Throwable \$e) { } ?>";
         });
 
         // OPTIONAL: apply locale/timezone from settings early (safe-guarded)

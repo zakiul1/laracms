@@ -6,6 +6,7 @@ use App\Models\Theme;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\Str;
@@ -15,6 +16,24 @@ class ThemeManager
 {
     /** Cache key for the active theme slug */
     private const CACHE_ACTIVE_SLUG = 'appearance.active_theme.slug';
+
+    /** Candidate screenshot file names (in priority order) */
+    private const SCREENSHOT_CANDIDATES = [
+        'screenshot.png',
+        'screenshot.jpg',
+        'screenshot.jpeg',
+        'screenshot.webp',
+    ];
+
+    /** True if the themes table exists (safe during early boot/composer scripts) */
+    private function themesTableReady(): bool
+    {
+        try {
+            return Schema::hasTable('themes');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
 
     public function basePath(): string
     {
@@ -48,8 +67,9 @@ class ThemeManager
             if (!is_dir($dir)) {
                 if ($dir === $this->basePath()) {
                     @mkdir($dir, 0775, true);
-                    if (!is_dir($dir))
+                    if (!is_dir($dir)) {
                         continue;
+                    }
                 } else {
                     continue;
                 }
@@ -68,18 +88,28 @@ class ThemeManager
                         'path' => $p,
                         'paths' => [$p],
                         'metadata' => $meta,
+                        'screenshot' => $this->findScreenshot($slug),
                     ];
                 } else {
                     $out[$slug]['paths'][] = $p;
+                    // prefer a screenshot if not yet found
+                    if (empty($out[$slug]['screenshot'])) {
+                        $out[$slug]['screenshot'] = $this->findScreenshot($slug);
+                    }
                 }
             }
         }
+
         return array_values($out);
     }
 
     /** Sync DB rows to disk */
     public function syncDb(): void
     {
+        if (!$this->themesTableReady()) {
+            return;
+        }
+
         $existing = Theme::pluck('id', 'slug')->all();
 
         foreach ($this->list() as $t) {
@@ -106,6 +136,9 @@ class ThemeManager
         if (!$this->themeExists($slug)) {
             throw new \InvalidArgumentException("Theme '{$slug}' not found.");
         }
+        if (!$this->themesTableReady()) {
+            throw new \RuntimeException('Themes table not available yet. Run migrations first.');
+        }
 
         DB::transaction(function () use ($slug) {
             Theme::query()->update(['status' => 'installed']);
@@ -113,6 +146,7 @@ class ThemeManager
         });
 
         Cache::forever(self::CACHE_ACTIVE_SLUG, $slug);
+        $this->writeActiveHint($slug);
 
         $this->rebindViewNamespace($slug);
     }
@@ -120,9 +154,11 @@ class ThemeManager
     /** Deactivate ALL themes so none is active */
     public function deactivateAll(): void
     {
-        DB::transaction(function () {
-            Theme::query()->update(['status' => 'installed']);
-        });
+        if ($this->themesTableReady()) {
+            DB::transaction(function () {
+                Theme::query()->update(['status' => 'installed']);
+            });
+        }
 
         // Clear any file hint you may have been writing
         try {
@@ -137,12 +173,51 @@ class ThemeManager
         app('view.finder')->flush();
     }
 
-    /** Current active slug or '' if none */
+    /** Current active slug or '' if none (SAFE before migrations) */
     public function activeSlug(): string
     {
+        if (!$this->themesTableReady()) {
+            return '';
+        }
+
         return Cache::rememberForever(self::CACHE_ACTIVE_SLUG, function () {
             return (string) (Theme::where('status', 'active')->value('slug') ?? '');
         });
+    }
+
+    /** Get active theme info array or null */
+    public function active(): ?array
+    {
+        $slug = $this->activeSlug();
+        return $slug ? $this->discover($slug) : null;
+    }
+
+    /** Aggregate info for a specific slug (name/version/author/paths/metadata/screenshot) */
+    public function discover(string $slug): ?array
+    {
+        if (!$this->themeExists($slug)) {
+            return null;
+        }
+
+        $paths = $this->asPaths($slug);
+        $meta = [];
+        foreach ($paths as $p) {
+            $m = $this->readMeta($p);
+            if ($m) {
+                $meta = array_replace($meta, $m);
+            }
+        }
+
+        return [
+            'name' => $meta['name'] ?? Str::headline($slug),
+            'slug' => $slug,
+            'version' => $meta['version'] ?? null,
+            'author' => $meta['author'] ?? null,
+            'path' => $paths[0] ?? null,
+            'paths' => $paths,
+            'metadata' => $meta,
+            'screenshot' => $this->findScreenshot($slug),
+        ];
     }
 
     /** Absolute path to /themes/{slug}/views or /themes/{slug} */
@@ -160,7 +235,10 @@ class ThemeManager
         return $this->fallbackViewsPath();
     }
 
-    /** Bind "theme::" to active (or fallback when none) */
+    /**
+     * Bind "theme::" to active (or fallback when none).
+     * Always append the fallback as a final namespace to avoid hard crashes for missing partials.
+     */
     public function rebindViewNamespace(?string $slug = null): void
     {
         $slug ??= $this->activeSlug();
@@ -168,8 +246,9 @@ class ThemeManager
         $paths = [];
         if ($slug) {
             $primary = $this->viewsPath($slug);
-            if (is_dir($primary))
+            if (is_dir($primary)) {
                 $paths[] = $primary;
+            }
 
             $res = resource_path("views/themes/{$slug}");
             if (is_dir($res)) {
@@ -177,23 +256,28 @@ class ThemeManager
             }
         }
 
-        if (empty($paths)) {
-            $paths[] = $this->fallbackViewsPath();
-        }
+        // Always add fallback at the end (lowest priority)
+        $paths[] = $this->fallbackViewsPath();
+
+        // Deduplicate while preserving order
+        $paths = array_values(array_unique($paths));
 
         View::replaceNamespace('theme', $paths);
         app('view.finder')->flush();
     }
 
+    /** Read metadata from theme.json or config.php in a theme directory */
     public function readMeta(string $themeDir): array
     {
         $json = $themeDir . '/theme.json';
         $php = $themeDir . '/config.php';
 
-        if (is_file($json))
-            return json_decode(file_get_contents($json), true) ?: [];
-        if (is_file($php))
+        if (is_file($json)) {
+            return json_decode((string) @file_get_contents($json), true) ?: [];
+        }
+        if (is_file($php)) {
             return (array) (include $php);
+        }
         return [];
     }
 
@@ -204,13 +288,23 @@ class ThemeManager
         if ($zip->open($uploadedZipFullPath) !== true) {
             throw new \RuntimeException('Invalid theme zip');
         }
-        $top = rtrim($zip->getNameIndex(0), '/');
-        $slug = basename($top);
 
-        $zip->extractTo($this->basePath());
+        // Try to detect the top-level folder name; fallback to filename slug
+        $first = rtrim($zip->getNameIndex(0) ?: '', '/');
+        $guessed = $first && str_contains($first, '/') ? explode('/', $first, 2)[0] : $first;
+        $slug = Str::slug(basename($guessed ?: pathinfo($uploadedZipFullPath, PATHINFO_FILENAME)));
+
+        // Extract to basePath/{slug}
+        $target = $this->basePath() . "/{$slug}";
+        if (!is_dir($target)) {
+            @mkdir($target, 0775, true);
+        }
+        $zip->extractTo($target);
         $zip->close();
 
+        // Safe if table doesn't exist yet
         $this->syncDb();
+
         return $slug;
     }
 
@@ -221,14 +315,30 @@ class ThemeManager
             throw new \RuntimeException("Cannot delete the active theme '{$slug}'. Deactivate first.");
         }
 
-        $path = $this->basePath() . "/{$slug}";
-        if (is_dir($path))
-            $this->rrmdir($path);
-        Theme::where('slug', $slug)->delete();
+        foreach ($this->asPaths($slug) as $path) {
+            if (is_dir($path)) {
+                $this->rrmdir($path);
+            }
+        }
+
+        if ($this->themesTableReady()) {
+            Theme::where('slug', $slug)->delete();
+        }
     }
 
     /** Does this slug exist in either root? */
     public function themeExists(string $slug): bool
+    {
+        foreach ($this->asPaths($slug) as $p) {
+            if (is_dir($p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** All candidate paths (disk + resources), primary first */
+    public function asPaths(string $slug): array
     {
         $paths = [
             $this->basePath() . "/{$slug}",
@@ -236,10 +346,26 @@ class ThemeManager
             resource_path("views/themes/{$slug}"),
             resource_path("views/themes/{$slug}/views"),
         ];
-        foreach ($paths as $p)
-            if (is_dir($p))
-                return true;
-        return false;
+        // Keep only unique, existing directories (but we still want non-existing order for discovery)
+        return array_values(array_unique($paths));
+    }
+
+    /** Find a screenshot file for a theme across both roots */
+    public function findScreenshot(string $slug): ?string
+    {
+        $roots = [
+            $this->basePath() . "/{$slug}",
+            resource_path("views/themes/{$slug}"),
+        ];
+        foreach ($roots as $root) {
+            foreach (self::SCREENSHOT_CANDIDATES as $name) {
+                $p = $root . '/' . $name;
+                if (is_file($p)) {
+                    return $p;
+                }
+            }
+        }
+        return null;
     }
 
     protected function rrmdir(string $dir): void
@@ -249,5 +375,15 @@ class ThemeManager
             is_dir($p) ? $this->rrmdir($p) : @unlink($p);
         }
         @rmdir($dir);
+    }
+
+    /** Write a small hint for the active theme (purely optional, used by ops/tools) */
+    private function writeActiveHint(?string $slug): void
+    {
+        try {
+            Storage::disk('local')->put('appearance_active_theme.txt', (string) $slug);
+        } catch (\Throwable $e) {
+            // ignore
+        }
     }
 }

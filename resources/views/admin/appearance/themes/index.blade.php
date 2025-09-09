@@ -104,9 +104,9 @@
                                 @csrf
                                 <button type="submit"
                                     class="px-3 py-1.5 rounded-radius text-sm border disabled:opacity-60 disabled:cursor-not-allowed
-                                               {{ $isActive
-                                                   ? 'cursor-not-allowed border-outline dark:border-outline-dark'
-                                                   : 'border-primary text-primary hover:bg-primary/10' }}"
+                                           {{ $isActive
+                                               ? 'cursor-not-allowed border-outline dark:border-outline-dark'
+                                               : 'border-primary text-primary hover:bg-primary/10' }}"
                                     title="{{ $isActive ? 'Currently active' : 'Set as active theme' }}"
                                     {{ $isActive ? 'disabled' : '' }}
                                     :disabled="submitting || {{ $isActive ? 'true' : 'false' }}">
@@ -114,6 +114,15 @@
                                     <span x-show="submitting">Activating…</span>
                                 </button>
                             </form>
+
+                            {{-- Customize (only for active theme) --}}
+                            @if ($isActive && \Route::has('admin.appearance.customize'))
+                                <a href="{{ route('admin.appearance.customize') }}"
+                                    class="px-3 py-1.5 rounded-radius border border-primary text-primary text-sm hover:bg-primary/10"
+                                    title="Customize the active theme">
+                                    Customize
+                                </a>
+                            @endif
 
                             {{-- Deactivate (optional; only shown if route exists) --}}
                             @if ($isActive && \Route::has('admin.appearance.themes.deactivate'))
@@ -143,7 +152,7 @@
                                 @method('DELETE')
                                 <button type="submit"
                                     class="px-3 py-1.5 rounded-radius border text-sm disabled:opacity-40 disabled:cursor-not-allowed
-                                               {{ $isActive ? 'border-outline dark:border-outline-dark' : 'border-red-600 text-red-600 hover:bg-red-50' }}"
+                                           {{ $isActive ? 'border-outline dark:border-outline-dark' : 'border-red-600 text-red-600 hover:bg-red-50' }}"
                                     title="{{ $isActive ? 'Cannot delete the active theme' : 'Delete theme' }}"
                                     {{ $isActive ? 'disabled' : '' }}
                                     :disabled="submitting || {{ $isActive ? 'true' : 'false' }}">
