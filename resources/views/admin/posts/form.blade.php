@@ -3,6 +3,9 @@
     $saveRoute = $post->exists
         ? route($isPage ? 'admin.pages.update' : 'admin.posts.update', $post)
         : route($isPage ? 'admin.pages.store' : 'admin.posts.store');
+
+    // Default status: Published for new items; preserve old() on validation error
+    $statusValue = old('status', $post->status ?: 'published');
 @endphp
 
 <form x-data="{ action: 'save' }" method="POST" action="{{ $saveRoute }}" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -80,7 +83,6 @@
             <h3 class="font-semibold mb-2">SEO Settings</h3>
             @php $seo = old('seo', optional($post->seo)->toArray() ?? []); @endphp
 
-            {{-- Row: Meta Title & Meta Keywords (2 cols) --}}
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                     <label class="block text-xs mb-1">Meta Title</label>
@@ -94,14 +96,12 @@
                 </div>
             </div>
 
-            {{-- Row: Meta Description --}}
             <div class="mt-3">
                 <label class="block text-xs mb-1">Meta Description</label>
                 <textarea name="seo[meta_description]" rows="3"
                     class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">{{ $seo['meta_description'] ?? '' }}</textarea>
             </div>
 
-            {{-- Row: Robots --}}
             <div class="mt-3">
                 <label class="block text-xs mb-1">Robots</label>
                 <div class="flex items-center gap-4">
@@ -127,10 +127,10 @@
             <div class="grid grid-cols-1 gap-3">
                 <div>
                     <label class="block text-xs mb-1">Status</label>
-                    <select name="status"
+                    <select name="status" x-ref="statusSelect"
                         class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
-                        <option value="draft" @selected(old('status', $post->status) === 'draft')>Draft</option>
-                        <option value="published" @selected(old('status', $post->status) === 'published')>Published</option>
+                        <option value="draft" @selected($statusValue === 'draft')>Draft</option>
+                        <option value="published" @selected($statusValue === 'published')>Published</option>
                     </select>
                 </div>
 
@@ -153,21 +153,27 @@
             </div>
 
             <div class="flex items-center gap-2 mt-3">
-                <button type="submit" @click="action='save'"
+                <button type="submit" @click="action='save'; $refs.statusSelect.value='draft'"
                     class="px-3 py-1.5 rounded-radius bg-surface-alt border border-outline text-sm hover:bg-surface dark:bg-surface-dark-alt dark:border-outline-dark">
                     Save Draft
                 </button>
-                <button type="submit" @click="action='publish'"
+                <button type="submit" @click="action='publish'; $refs.statusSelect.value='published'"
                     class="px-3 py-1.5 rounded-radius bg-primary text-white text-sm">
                     Publish
                 </button>
             </div>
         </div>
 
-        {{-- Featured Images (multiple via your component) --}}
+        {{-- ONE unified media section: pick one OR many; the first becomes "featured" --}}
         <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
-            {{--   <h3 class="font-semibold mb-2">Featured Images</h3> --}}
-            <x-media-picker name="gallery" :multiple="true" :value="old('gallery', $post->gallery->pluck('id')->all())" />
+            <x-media-picker name="gallery" :multiple="true" :value="old('gallery', $post->gallery->pluck('id')->all())">
+                Featured Image
+            </x-media-picker>
+
+            <p class="text-xs text-gray-500 mt-2">
+                Tip: select one or multiple images. The <strong>first</strong> selected will be used as the featured
+                image.
+            </p>
         </div>
 
         {{-- Categories (POSTS only) --}}
@@ -189,8 +195,7 @@
                     @endforeach
                 </div>
 
-                {{-- Quick add with Parent selector --}}
-                {{-- Quick add with Parent selector (fixed layout) --}}
+                {{-- Quick add --}}
                 <div class="mt-2 flex flex-wrap items-center gap-2">
                     <input type="text" id="new-cat"
                         class="flex-1 min-w-[10rem] border border-outline rounded-radius px-2 py-1 text-sm"
@@ -208,26 +213,25 @@
 
                     <button type="button" class="shrink-0 text-sm px-3 py-1 border rounded-radius cursor-pointer"
                         @click="
-            fetch('{{ route('admin.taxonomies.category.quick') }}', {
-                method: 'POST',
-                headers: {
-                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    name: document.getElementById('new-cat').value,
-                    parent: Number(document.getElementById('new-cat-parent').value) || 0
-                })
-            })
-            .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-            .then(() => location.reload())
-            .catch(() => alert('Could not create category'));
-        ">
+                            fetch('{{ route('admin.taxonomies.category.quick') }}', {
+                                method: 'POST',
+                                headers: {
+                                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                                    'Accept': 'application/json',
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    name: document.getElementById('new-cat').value,
+                                    parent: Number(document.getElementById('new-cat-parent').value) || 0
+                                })
+                            })
+                            .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+                            .then(() => location.reload())
+                            .catch(() => alert('Could not create category'));
+                        ">
                         Add
                     </button>
                 </div>
-
             </div>
         @endunless
 
@@ -266,5 +270,5 @@
 </form>
 
 @push('head')
-    {{-- If you use CKEditor/Tiptap/Quill, initialize it via your app.js --}}
+    {{-- If your media browser script needs to be present, make sure it’s included in admin.layout --}}
 @endpush

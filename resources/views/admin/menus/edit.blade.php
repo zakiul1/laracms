@@ -1,11 +1,5 @@
 @extends('admin.layout', ['title' => 'Edit Menu'])
 
-@push('head')
-    {{-- SortableJS (CDN) --}}
-    <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/modular/sortable.complete.esm.js" type="module">
-    </script>
-@endpush
-
 @section('content')
     <div class="mb-4">
         <h1 class="text-xl font-semibold">Edit Menu — {{ $menu->name }}</h1>
@@ -16,8 +10,9 @@
     @endif
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {{-- Left: Add Items --}}
+        {{-- LEFT COLUMN --}}
         <div class="lg:col-span-1 space-y-4">
+
             {{-- Custom Link --}}
             <div class="border rounded-radius p-4">
                 <h2 class="font-medium mb-3">Add Custom Link</h2>
@@ -40,72 +35,87 @@
                                 <option value="_blank">New tab</option>
                             </select>
                         </div>
-                        <div>
-                            <label class="block text-sm mb-1">Icon (optional)</label>
-                            <input name="icon" class="w-full border rounded-radius px-3 py-2" placeholder="lucide-home">
+                        <div x-data="{ val: '' }" x-init="val = ''">
+                            <label class="block text-sm mb-1 flex items-center gap-2">
+                                Icon (optional)
+                                <span class="inline-flex w-5 h-5 items-center justify-center">
+                                    <i x-show="val" :data-lucide="val"></i>
+                                </span>
+                            </label>
+                            <input name="icon" x-model="val" class="w-full border rounded-radius px-3 py-2"
+                                placeholder="lucide-home">
                         </div>
                     </div>
+                    <p class="text-xs text-muted-foreground">Target controls whether the link opens in the same tab
+                        (<code>_self</code>) or a new tab (<code>_blank</code>).</p>
                     <button class="px-3 py-2 border rounded-radius">Add to Menu</button>
                 </form>
             </div>
 
             {{-- Add Pages --}}
-            <div class="border rounded-radius p-4 max-h-[380px] overflow-auto">
+            <div class="border rounded-radius p-4" x-data="{ q: '' }">
                 <h2 class="font-medium mb-3">Add Pages</h2>
-                <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}">
-                    @csrf
-                    <input type="hidden" name="type" value="page">
-                    <div class="space-y-2">
+                <input x-model="q" class="w-full border rounded-radius px-3 py-2 mb-2" placeholder="Search pages…">
+                <div class="max-h-96 overflow-auto space-y-2">
+                    <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}" class="space-y-2">
+                        @csrf
+                        <input type="hidden" name="type" value="page">
                         @foreach ($pages as $p)
-                            <label class="flex items-center gap-2 text-sm">
+                            <label class="flex items-center gap-2 text-sm"
+                                x-show="'{{ Str::lower($p->title) }}'.includes(q.toLowerCase())">
                                 <input type="checkbox" name="ids[]" value="{{ $p->id }}">
                                 <span>{{ $p->title }}</span>
                             </label>
                         @endforeach
-                    </div>
-                    <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
-                </form>
+                        <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
+                    </form>
+                </div>
             </div>
 
             {{-- Add Posts --}}
-            <div class="border rounded-radius p-4 max-h-[380px] overflow-auto">
+            <div class="border rounded-radius p-4" x-data="{ q: '' }">
                 <h2 class="font-medium mb-3">Add Posts</h2>
-                <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}">
-                    @csrf
-                    <input type="hidden" name="type" value="post">
-                    <div class="space-y-2">
+                <input x-model="q" class="w-full border rounded-radius px-3 py-2 mb-2" placeholder="Search posts…">
+                <div class="max-h-96 overflow-auto space-y-2">
+                    <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}" class="space-y-2">
+                        @csrf
+                        <input type="hidden" name="type" value="post">
                         @foreach ($posts as $p)
-                            <label class="flex items-center gap-2 text-sm">
+                            <label class="flex items-center gap-2 text-sm"
+                                x-show="'{{ Str::lower($p->title) }}'.includes(q.toLowerCase())">
                                 <input type="checkbox" name="ids[]" value="{{ $p->id }}">
                                 <span>{{ $p->title }} <span
                                         class="text-xs text-muted-foreground">({{ $p->type }})</span></span>
                             </label>
                         @endforeach
-                    </div>
-                    <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
-                </form>
+                        <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
+                    </form>
+                </div>
             </div>
 
             {{-- Add Categories --}}
-            <div class="border rounded-radius p-4 max-h-[380px] overflow-auto">
+            <div class="border rounded-radius p-4" x-data="{ q: '' }">
                 <h2 class="font-medium mb-3">Add Categories</h2>
-                <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}">
-                    @csrf
-                    <input type="hidden" name="type" value="category">
-                    <div class="space-y-2">
+                <input x-model="q" class="w-full border rounded-radius px-3 py-2 mb-2" placeholder="Search categories…">
+                <div class="max-h-96 overflow-auto space-y-2">
+                    <form method="POST" action="{{ route('admin.menus.items.bulk.store', $menu) }}" class="space-y-2">
+                        @csrf
+                        <input type="hidden" name="type" value="category">
                         @foreach ($categories as $tt)
-                            <label class="flex items-center gap-2 text-sm">
+                            @php $name = $tt->term?->name ?? ('Category #'.$tt->id); @endphp
+                            <label class="flex items-center gap-2 text-sm"
+                                x-show="'{{ Str::lower($name) }}'.includes(q.toLowerCase())">
                                 <input type="checkbox" name="ids[]" value="{{ $tt->id }}">
-                                <span>{{ $tt->term?->name ?? 'Category #' . $tt->id }}</span>
+                                <span>{{ $name }}</span>
                             </label>
                         @endforeach
-                    </div>
-                    <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
-                </form>
+                        <button class="mt-3 px-3 py-2 border rounded-radius">Add to Menu</button>
+                    </form>
+                </div>
             </div>
         </div>
 
-        {{-- Right: Menu structure & settings --}}
+        {{-- RIGHT COLUMN --}}
         <div class="lg:col-span-2 space-y-6" x-data="menuEditor()">
             {{-- Menu meta --}}
             <div class="border rounded-radius p-4">
@@ -135,14 +145,15 @@
 
             {{-- Assign locations --}}
             <div class="border rounded-radius p-4">
-                <form method="POST" action="{{ route('admin.menus.assign', $menu) }}" class="space-y-2">
+                <form method="POST" action="{{ route('admin.menus.assign') }}" class="space-y-2">
                     @csrf
+                    <input type="hidden" name="menu_id" value="{{ $menu->id }}">
                     <div class="font-medium mb-2">Display Locations</div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                         @foreach ($locations as $loc)
                             <label class="flex items-center gap-2 text-sm border rounded-radius p-2">
-                                <input type="checkbox" name="locations[]" value="{{ $loc->slug }}"
-                                    {{ $loc->menu_id === $menu->id ? 'checked' : '' }}>
+                                <input type="checkbox" name="assign[{{ $loc->slug }}]" value="1"
+                                    @checked($loc->menu_id === $menu->id)>
                                 <span>{{ $loc->name }} ({{ $loc->slug }})</span>
                             </label>
                         @endforeach
@@ -151,14 +162,15 @@
                 </form>
             </div>
 
-            {{-- Structure --}}
+            {{-- Structure / reorder --}}
             <div class="border rounded-radius p-4">
                 <div class="flex items-center justify-between mb-2">
                     <h2 class="font-medium">Menu Structure</h2>
-                    <button class="px-3 py-2 border rounded-radius" @click="save()">Save Order</button>
+                    <button type="button" class="px-3 py-2 border rounded-radius" @click="save()">Save Order</button>
                 </div>
 
-                <ul id="menu-root" class="space-y-2">
+                <ul id="menu-root" class="space-y-2" data-reorder-url="{{ route('admin.menus.items.reorder', $menu) }}"
+                    data-csrf="{{ csrf_token() }}">
                     @foreach ($menu->roots as $item)
                         @include('admin.menus.partials.item', ['item' => $item])
                     @endforeach
@@ -166,60 +178,8 @@
             </div>
         </div>
     </div>
-
-    @push('scripts')
-        <script type="module">
-            import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/modular/sortable.esm.js';
-
-            window.menuEditor = () => ({
-                save() {
-                    const tree = serializeList(document.getElementById('menu-root'));
-                    fetch(@json(route('admin.menus.reorder', $menu)), {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': @json(csrf_token()),
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            tree
-                        })
-                    }).then(r => r.json()).then(() => location.reload());
-                }
-            });
-
-            function initSortable(ul) {
-                new Sortable(ul, {
-                    group: 'menu',
-                    animation: 150,
-                    fallbackOnBody: true,
-                    swapThreshold: 0.65,
-                    handle: '.drag-handle',
-                    draggable: 'li',
-                    onAdd: nestInit,
-                    onUpdate: nestInit,
-                });
-                ul.querySelectorAll('ul').forEach(initSortable);
-            }
-
-            function nestInit() {
-                /* noop for now */
-            }
-
-            function serializeList(ul) {
-                const items = [];
-                ul.querySelectorAll(':scope > li').forEach(li => {
-                    const node = {
-                        id: parseInt(li.dataset.id),
-                        children: []
-                    };
-                    const child = li.querySelector(':scope > ul');
-                    if (child) node.children = serializeList(child);
-                    items.push(node);
-                });
-                return items;
-            }
-            // init root
-            initSortable(document.getElementById('menu-root'));
-        </script>
-    @endpush
 @endsection
+
+@push('scripts')
+    @vite('resources/js/admin/menus-edit.js')
+@endpush

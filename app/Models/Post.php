@@ -8,10 +8,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Str; // ⬅️ for slug helpers
 
-class Post extends Model
+// Spatie Media Library
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media as SpatieMedia;
+
+// Your optimized conversions trait (from app/Support/Media/HasOptimizedImages.php)
+use App\Support\Media\HasOptimizedImages;
+
+class Post extends Model implements HasMedia
 {
     use SoftDeletes;
+    use HasOptimizedImages; // adds media collection 'images' + WebP/srcset conversions
 
     protected $fillable = [
         'type',
@@ -33,7 +42,6 @@ class Post extends Model
     ];
 
     protected $casts = [
-        // Excerpt is plain text in DB
         'excerpt' => 'string',
         'published_at' => 'datetime',
         'is_sticky' => 'bool',
@@ -42,10 +50,9 @@ class Post extends Model
     ];
 
     /* -----------------------------------------------------------------
-     | Relationships
+     | Relationships (existing)
      * ----------------------------------------------------------------*/
 
-    // If you still use post_term somewhere
     public function terms(): BelongsToMany
     {
         return $this->belongsToMany(Term::class, 'post_term');
@@ -56,6 +63,7 @@ class Post extends Model
         return $this->hasMany(PostMeta::class);
     }
 
+    // Kept for backward compatibility if some views/calls use metas()
     public function metas(): HasMany
     {
         return $this->hasMany(PostMeta::class);
@@ -99,6 +107,20 @@ class Post extends Model
     }
 
     /* -----------------------------------------------------------------
+     | Spatie Media (helpers)
+     * ----------------------------------------------------------------*/
+
+    public function spatieFeaturedMedia(): ?SpatieMedia
+    {
+        return $this->getFirstMedia('images');
+    }
+
+    public function spatieImages()
+    {
+        return collect($this->getMedia('images'));
+    }
+
+    /* -----------------------------------------------------------------
      | Scopes & helpers
      * ----------------------------------------------------------------*/
 
@@ -110,14 +132,43 @@ class Post extends Model
     public function setSlugIfEmpty(): void
     {
         if (!$this->slug) {
-            $this->slug = \Str::slug($this->title) ?: \Str::random(8);
+            $this->slug = Str::slug($this->title) ?: Str::random(8);
         }
+    }
+
+    /**
+     * Ensure slug is unique within the same `type` by appending -2, -3, ...
+     * Includes soft-deleted rows to match the DB unique index behavior.
+     */
+    public static function uniqueSlug(string $value, string $type, ?int $ignoreId = null): string
+    {
+        $base = Str::slug($value) ?: Str::random(8);
+        $slug = $base;
+
+        $existing = static::withTrashed()
+            ->where('type', $type)
+            ->when($ignoreId, fn($q) => $q->where('id', '!=', $ignoreId))
+            ->where('slug', 'like', $base . '%')
+            ->pluck('slug')
+            ->all();
+
+        if (!in_array($slug, $existing, true)) {
+            return $slug;
+        }
+
+        $n = 2;
+        while (in_array($candidate = "{$base}-{$n}", $existing, true)) {
+            $n++;
+        }
+        return $candidate;
     }
 
     protected static function booted(): void
     {
         static::saving(function (self $post) {
-            $post->setSlugIfEmpty();
+            // Normalize provided slug or build from title, then make unique per type
+            $raw = $post->slug ?: $post->title;
+            $post->slug = static::uniqueSlug($raw, $post->type ?? 'post', $post->id);
         });
     }
 }

@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\View;
 use App\Support\Settings\Settings;
 use App\Support\Settings\SettingsPageRegistry;
 
+// NEW: Shortcodes
+use App\Support\Shortcode\ShortcodeManager;
+
 /*
 |--------------------------------------------------------------------------
 | Hook helpers (WordPress-style)
@@ -32,6 +35,20 @@ if (!function_exists('do_action')) {
     }
 }
 
+/* Extra parity helpers */
+if (!function_exists('remove_action')) {
+    function remove_action(string $hook, callable $callback): void
+    {
+        app(HookManager::class)->removeAction($hook, $callback);
+    }
+}
+if (!function_exists('has_action')) {
+    function has_action(string $hook, ?callable $callback = null): bool
+    {
+        return app(HookManager::class)->hasAction($hook, $callback);
+    }
+}
+
 if (!function_exists('add_filter')) {
     function add_filter(string $hook, callable $callback, int $priority = 10): void
     {
@@ -43,6 +60,20 @@ if (!function_exists('apply_filters')) {
     function apply_filters(string $hook, $value, ...$args)
     {
         return app(HookManager::class)->applyFilters($hook, $value, ...$args);
+    }
+}
+
+/* Extra parity helpers */
+if (!function_exists('remove_filter')) {
+    function remove_filter(string $hook, callable $callback): void
+    {
+        app(HookManager::class)->removeFilter($hook, $callback);
+    }
+}
+if (!function_exists('has_filter')) {
+    function has_filter(string $hook, ?callable $callback = null): bool
+    {
+        return app(HookManager::class)->hasFilter($hook, $callback);
     }
 }
 
@@ -368,5 +399,82 @@ if (!function_exists('settings_import')) {
         } catch (\Throwable $e) {
             return false;
         }
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| SHORTCODE helpers (WordPress-style)
+|--------------------------------------------------------------------------
+|
+| Registration & usage:
+|   add_shortcode('button', fn($atts,$content)=>'...html...');
+|   {!! do_shortcode($post->content) !!}
+|
+*/
+
+if (!function_exists('shortcode')) {
+    function shortcode(): ShortcodeManager
+    {
+        /** @var ShortcodeManager $m */
+        $m = app('shortcode');
+        return $m;
+    }
+}
+
+if (!function_exists('add_shortcode')) {
+    function add_shortcode(string $tag, callable $handler): void
+    {
+        shortcode()->add($tag, $handler);
+    }
+}
+
+if (!function_exists('remove_shortcode')) {
+    function remove_shortcode(string $tag): void
+    {
+        shortcode()->remove($tag);
+    }
+}
+
+if (!function_exists('remove_all_shortcodes')) {
+    function remove_all_shortcodes(): void
+    {
+        shortcode()->removeAll();
+    }
+}
+
+if (!function_exists('has_shortcode')) {
+    function has_shortcode(?string $content, ?string $tag = null): bool
+    {
+        return shortcode()->contains($content, $tag);
+    }
+}
+
+if (!function_exists('do_shortcode')) {
+    function do_shortcode(?string $content, array $context = []): string
+    {
+        return shortcode()->compile($content, $context);
+    }
+}
+
+/** Alias like WP */
+if (!function_exists('apply_shortcodes')) {
+    function apply_shortcodes(?string $content, array $context = []): string
+    {
+        return do_shortcode($content, $context);
+    }
+}
+
+if (!function_exists('strip_shortcodes')) {
+    function strip_shortcodes(?string $content): string
+    {
+        return shortcode()->strip($content);
+    }
+}
+
+if (!function_exists('shortcode_atts')) {
+    function shortcode_atts(array $pairs, array $atts, string $shortcode = ''): array
+    {
+        return shortcode()->atts($pairs, $atts, $shortcode);
     }
 }

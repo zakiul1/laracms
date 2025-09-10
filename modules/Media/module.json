@@ -1,0 +1,7 @@
+{
+  "name": "Media",
+  "slug": "media",
+  "version": "1.0.0",
+  "protected": true,
+  "provider": "\\Modules\\Media\\MediaServiceProvider"
+}

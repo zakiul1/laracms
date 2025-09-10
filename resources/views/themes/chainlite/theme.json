@@ -1,0 +1,9 @@
+{
+  "name": "chainlite",
+  "version": "1.0.0",
+  "description": "Tailwind v4 corporate theme. Dynamic menus, SEO, shortcodes.",
+  "author": "You",
+  "menus": ["primary", "footer"],
+  "widget_areas": ["footer-1", "footer-2", "footer-3"],
+  "license": "MIT"
+}

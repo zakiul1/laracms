@@ -4,7 +4,6 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
 use App\Support\Appearance\ThemeManager;
 
-
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\PostController;
@@ -43,6 +42,9 @@ use App\Http\Controllers\Admin\Settings\SettingsController;
  */
 use App\Http\Controllers\Admin\Tools\ThemeFileEditorController;
 use App\Http\Controllers\Admin\Tools\PluginFileEditorController;
+
+/** ✅ NEW: Front-end controller for public pages/posts */
+use App\Http\Controllers\FrontController;
 
 // --------------------------------------------------
 // Public
@@ -133,10 +135,15 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         ->whereNumber('post')->whereNumber('revision')->name('posts.revisions.restore');
 
     // Pages
-    Route::resource('pages', PageController::class)->except(['show'])->parameters(['pages' => 'post']);
-    Route::get('/pages/{post}/revisions', [PageController::class, 'revisions'])->whereNumber('post')->name('pages.revisions');
-    Route::post('/pages/{post}/revisions/{revision}/restore', [PageController::class, 'restoreRevision'])
-        ->whereNumber('post')->whereNumber('revision')->name('pages.revisions.restore');
+    Route::resource('pages', PageController::class)
+        ->except(['show'])
+        ->parameters(['pages' => 'page']);
+
+    Route::get('/pages/{page}/revisions', [PageController::class, 'revisions'])
+        ->whereNumber('page')->name('pages.revisions');
+
+    Route::post('/pages/{page}/revisions/{revision}/restore', [PageController::class, 'restoreRevision'])
+        ->whereNumber('page')->whereNumber('revision')->name('pages.revisions.restore');
 
     // Categories
     Route::get('categories', [CategoryController::class, 'index'])->name('categories.index');
@@ -206,7 +213,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
         Route::delete('/{menu}/items/{item}', [MenuItemController::class, 'destroy'])
             ->whereNumber('menu')->whereNumber('item')->name('items.destroy');
 
-        // ✅ Bulk add (binds Menu model and matches controller signature)
+        // Bulk add (binds Menu model and matches controller signature)
         Route::post('/{menu}/items/bulk', [MenuItemController::class, 'storeBulk'])
             ->whereNumber('menu')->name('items.bulk.store');
 
@@ -284,8 +291,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
 
         // Customizer (active theme)
         Route::get('/customize', [CustomizerController::class, 'index'])->name('customize');
-        Route::post('/customize/save', [CustomizerController::class, 'save'])->name('customize.save');   // updated path
-        Route::post('/customize/reset', [CustomizerController::class, 'reset'])->name('customize.reset'); // new reset
+        Route::post('/customize/save', [CustomizerController::class, 'save'])->name('customize.save');
+        Route::post('/customize/reset', [CustomizerController::class, 'reset'])->name('customize.reset');
         Route::get('/customize/preview', [CustomizerController::class, 'preview'])->name('customize.preview');
 
         // Background & Header
@@ -373,3 +380,19 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
 });
 
 require __DIR__ . '/auth.php';
+
+/* --------------------------------------------------
+ | Public content routes (Pages/Posts) – must be last
+ | so they don't collide with admin/auth. Exclusions
+ | ensure /login, /admin, etc. aren't captured.
+ * -------------------------------------------------*/
+
+// Category archive (optional)
+Route::get('/category/{slug}', [FrontController::class, 'category'])
+    ->where('slug', '[A-Za-z0-9\-\_]+')
+    ->name('category.show');
+
+// Catch-all single (Page → Post) with exclusions
+Route::get('/{slug}', [FrontController::class, 'single'])
+    ->where('slug', '^(?!admin|login|logout|register|password|profile|settings|appearance|plugins|tools|widgets|themes|storage|api|preview|debug).+$')
+    ->name('front.single');
