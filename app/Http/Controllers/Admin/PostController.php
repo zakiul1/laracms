@@ -271,35 +271,52 @@ class PostController extends BaseContentController
         DB::table('post_media')->insert($rows);
     }
 
-    /** Mirror legacy featured_media_id into Spatie collection 'images' */
+    /**
+     * Mirror legacy featured_media_id into Spatie collection 'images'
+     * WITHOUT altering the original legacy file on its disk.
+     */
     protected function syncSpatieFeaturedFromLegacy(Post $post): void
     {
-        if (!$this->spatieMediaReady())
+        if (!$this->spatieMediaReady()) {
             return;
+        }
 
+        // Keep just the latest selection reflected in Spatie
         if (method_exists($post, 'clearMediaCollection')) {
             $post->clearMediaCollection('images');
         }
 
         $legacy = $post->featuredMedia; // belongsTo(Media::class, 'featured_media_id')
-        if (!$legacy)
+        if (!$legacy) {
             return;
+        }
 
-        $path = $this->resolveLegacyMediaAbsolutePath($legacy);
-        if (!$path || !is_file($path))
-            return;
+        // Prefer non-destructive add from the legacy disk path
+        $disk = $legacy->disk ?: 'public';
+        $relPath = $legacy->path ?? $legacy->file_path ?? null;
 
-        $mime = @mime_content_type($path) ?: '';
-        if (strpos($mime, 'image/') !== 0)
-            return;
-
-        if (method_exists($post, 'addMedia')) {
+        if ($relPath && method_exists($post, 'addMediaFromDisk')) {
             try {
-                $post->addMedia($path)
+                $post->addMediaFromDisk($relPath, $disk)
+                    ->preservingOriginal()                  // <- do not move/remove the legacy file
+                    ->withResponsiveImages()
+                    ->toMediaCollection('images');
+                return;
+            } catch (\Throwable $e) {
+                // fall through to absolute path approach
+            }
+        }
+
+        // Fallback: absolute path (still preserve original)
+        $abs = $this->resolveLegacyMediaAbsolutePath($legacy);
+        if ($abs && is_file($abs) && method_exists($post, 'addMedia')) {
+            try {
+                $post->addMedia($abs)
+                    ->preservingOriginal()                  // <- keep legacy file intact
                     ->withResponsiveImages()
                     ->toMediaCollection('images');
             } catch (\Throwable $e) {
-                // log if you want
+                // swallow/log if desired
             }
         }
     }

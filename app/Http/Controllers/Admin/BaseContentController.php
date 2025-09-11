@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Post;
-use App\Models\Term;
 use App\Models\TermRelationship;
 use App\Models\TermTaxonomy;
 use Illuminate\Http\Request;
@@ -13,19 +12,24 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-
+use App\Support\Appearance\ThemeManager;
 
 abstract class BaseContentController extends Controller
 {
-    /** 'post' or 'page' */
+    /** Must return 'post' or 'page' */
     abstract protected function contentType(): string;
+
+    /** simple in-request cache to avoid re-scanning the filesystem repeatedly */
+    protected static array $templateCache = [];
 
     public function index(Request $r)
     {
         $q = Post::query()->type($this->contentType())->latest('id');
-        $s = trim((string) $r->input('s', ''));
-        if ($s !== '') {
-            $q->where(fn($x) => $x->where('title', 'like', "%$s%")->orWhere('slug', 'like', "%$s%"));
+
+        if ($s = trim((string) $r->input('s', ''))) {
+            $q->where(fn($x) => $x
+                ->where('title', 'like', "%{$s}%")
+                ->orWhere('slug', 'like', "%{$s}%"));
         }
 
         return view('admin.posts.index', [
@@ -37,14 +41,26 @@ abstract class BaseContentController extends Controller
 
     public function create()
     {
-        return view('admin.posts.create', [
+        $payload = [
             'post' => new Post([
                 'type' => $this->contentType(),
                 'status' => 'draft',
                 'visibility' => 'public',
             ]),
             'type' => $this->contentType(),
-        ]);
+        ];
+
+        if ($this->contentType() === 'page') {
+            // Pages: provide template list
+            $payload['templates'] = $this->templateOptions('page');
+            $payload['categoriesTree'] = [];
+        } else {
+            // Posts: categories (no templates for posts by default)
+            $payload['categoriesTree'] = $this->categoriesTree();
+            $payload['selectedCategoryIds'] = [];
+        }
+
+        return view('admin.posts.create', $payload);
     }
 
     public function store(Request $r)
@@ -53,7 +69,7 @@ abstract class BaseContentController extends Controller
 
         $data = $this->validated($r);
         $data['type'] = $this->contentType();
-        $data['author_id'] = $r->user()->id; // ⬅️ current user is the author
+        $data['author_id'] = $r->user()->id;
         $this->applyPublishTimestamp($data);
 
         return DB::transaction(function () use ($r, $data) {
@@ -77,10 +93,20 @@ abstract class BaseContentController extends Controller
 
         $post->load(['seo', 'metas', 'featuredMedia', 'gallery', 'revisions']);
 
-        return view('admin.posts.edit', [
+        $payload = [
             'post' => $post,
             'type' => $this->contentType(),
-        ]);
+        ];
+
+        if ($this->contentType() === 'page') {
+            $payload['templates'] = $this->templateOptions('page');
+            $payload['categoriesTree'] = [];
+        } else {
+            $payload['categoriesTree'] = $this->categoriesTree();
+            $payload['selectedCategoryIds'] = $this->selectedCategoryIds($post->id);
+        }
+
+        return view('admin.posts.edit', $payload);
     }
 
     public function update(Request $r, Post $post)
@@ -116,7 +142,8 @@ abstract class BaseContentController extends Controller
             ->with('success', ucfirst($this->contentType()) . ' deleted.');
     }
 
-    /** Validation & normalization */
+    /* ---------------------- Validation & normalization ---------------------- */
+
     protected function validated(Request $r, ?int $ignoreId = null): array
     {
         $type = $this->contentType();
@@ -127,7 +154,8 @@ abstract class BaseContentController extends Controller
                 'nullable',
                 'string',
                 'max:255',
-                Rule::unique('posts', 'slug')->ignore($ignoreId)
+                Rule::unique('posts', 'slug')
+                    ->ignore($ignoreId)
                     ->where(fn($q) => $q->where('type', $type)),
             ],
             'content' => ['nullable', 'string'],
@@ -140,17 +168,17 @@ abstract class BaseContentController extends Controller
             'published_at' => ['nullable', 'date'],
         ]);
 
-        // Slug default + ensure unique within type (including trashed)
+        // slug default + unique within type (incl. trashed)
         $v['slug'] = trim((string) ($v['slug'] ?? ''));
         if ($v['slug'] === '') {
             $v['slug'] = Str::slug($v['title']) ?: Str::random(8);
         }
         $v['slug'] = $this->uniqueSlugWithinType($type, $v['slug'], $ignoreId);
 
-        // Remove legacy/unwanted fields if present
+        // strip legacy/unwanted fields
         unset($v['is_sticky'], $v['allow_comments'], $v['featured_media_id']);
 
-        // Template only matters for pages; strip if this is a post
+        // template only applies to pages
         if ($type === 'post') {
             unset($v['template']);
         }
@@ -163,12 +191,12 @@ abstract class BaseContentController extends Controller
         return $this->contentType() === 'post' ? 'admin.posts' : 'admin.pages';
     }
 
-    /* ------------------ TAXONOMIES / METAS / SEO / GALLERY ------------------ */
+    /* ---------------- TAXONOMIES / METAS / SEO / GALLERY ---------------- */
 
     protected function syncTaxonomies(Post $post, Request $r): void
     {
-        // Pages: no categories
         if ($this->contentType() !== 'post') {
+            // pages: clear any category links
             TermRelationship::where('object_id', $post->id)
                 ->whereIn('term_taxonomy_id', function ($q) {
                     $q->select('id')->from('term_taxonomies')->where('taxonomy', 'category');
@@ -177,7 +205,7 @@ abstract class BaseContentController extends Controller
             return;
         }
 
-        // Accept either term_taxonomy IDs or term IDs
+        // Accept either term_taxonomy ids or term ids
         $incoming = collect($r->input('categories', []))->filter();
 
         $ttxIds = $incoming->map(function ($raw) {
@@ -185,17 +213,14 @@ abstract class BaseContentController extends Controller
             if ($id <= 0)
                 return null;
 
-            // already a term_taxonomy.id?
             if (TermTaxonomy::where('id', $id)->where('taxonomy', 'category')->exists()) {
                 return $id;
             }
-
-            // treat as term.id -> map to term_taxonomy.id
             $ttx = TermTaxonomy::where('term_id', $id)->where('taxonomy', 'category')->first();
             return $ttx?->id;
         })->filter()->unique()->values();
 
-        // Remove old category relations that are not selected
+        // remove deselected
         TermRelationship::where('object_id', $post->id)
             ->whereIn('term_taxonomy_id', function ($q) {
                 $q->select('id')->from('term_taxonomies')->where('taxonomy', 'category');
@@ -203,18 +228,14 @@ abstract class BaseContentController extends Controller
             ->when($ttxIds->isNotEmpty(), fn($q) => $q->whereNotIn('term_taxonomy_id', $ttxIds))
             ->delete();
 
-        // Upsert current selections
+        // upsert selected
         $hasTermOrder = Schema::hasColumn('term_relationships', 'term_order');
-
         foreach ($ttxIds as $ttxId) {
             $keys = ['object_id' => $post->id, 'term_taxonomy_id' => $ttxId];
             $values = $hasTermOrder ? ['term_order' => 0] : [];
-
-            // if term_order column doesn't exist, this inserts/keeps the row without it
             DB::table('term_relationships')->updateOrInsert($keys, $values);
         }
     }
-
 
     protected function syncMetas(Post $post, array $rows): void
     {
@@ -261,7 +282,6 @@ abstract class BaseContentController extends Controller
     /** Keep ONLY multiple featured images (gallery). */
     protected function syncGallery(Post $post, array $gallery): void
     {
-        // Remove any existing gallery/featured rows to avoid ghosts
         DB::table('post_media')
             ->where('post_id', $post->id)
             ->whereIn('role', ['featured', 'gallery'])
@@ -270,9 +290,8 @@ abstract class BaseContentController extends Controller
         $position = 0;
         foreach ($gallery as $mediaId) {
             $mediaId = (int) $mediaId;
-            if ($mediaId <= 0) {
+            if ($mediaId <= 0)
                 continue;
-            }
 
             DB::table('post_media')->insert([
                 'post_id' => $post->id,
@@ -302,18 +321,17 @@ abstract class BaseContentController extends Controller
         ]);
     }
 
-    /* ------------------------------- helpers ------------------------------- */
+    /* -------------------------------- helpers ------------------------------- */
 
     protected function normalizeAction(Request $r): void
     {
         $action = strtolower((string) $r->input('action', 'save'));
-        $publishLike = in_array($action, ['publish', 'publish_now', 'publish-post', 'publish-page'], true);
+        $publish = in_array($action, ['publish', 'publish_now', 'publish-post', 'publish-page'], true);
 
-        if ($publishLike) {
-            $r->merge(['status' => 'published', 'published_at' => null]);
-        } else {
-            $r->merge(['status' => 'draft', 'published_at' => null]);
-        }
+        $r->merge([
+            'status' => $publish ? 'published' : 'draft',
+            'published_at' => null,
+        ]);
     }
 
     protected function applyPublishTimestamp(array &$data): void
@@ -327,16 +345,14 @@ abstract class BaseContentController extends Controller
         }
     }
 
-    /** Ensure slug is unique within type, including SOFT-DELETED rows. */
+    /** Ensure slug is unique within type, including soft-deleted rows. */
     protected function uniqueSlugWithinType(string $type, string $slug, ?int $ignoreId = null): string
     {
         $base = Str::slug($slug) ?: Str::random(8);
         $candidate = $base;
         $i = 2;
 
-        // include trashed rows to avoid DB unique key collisions
         $baseQuery = Post::withoutGlobalScopes()->where('type', $type);
-
         while (
             (clone $baseQuery)
                 ->where('slug', $candidate)
@@ -344,11 +360,88 @@ abstract class BaseContentController extends Controller
                 ->exists()
         ) {
             $candidate = "{$base}-{$i}";
-            $i++;
-            if ($i > 200)
+            if (++$i > 200)
                 break;
         }
 
         return $candidate;
+    }
+
+    /**
+     * Discover templates from the active theme.
+     *  - Pages: resources/themes/<active>/views/pages/templates/*.blade.php
+     *  - Posts: resources/themes/<active>/views/posts/templates/*.blade.php
+     *
+     * Returns ['full-width' => 'Full Width', ...] (no empty "Default" here).
+     */
+    protected function templateOptions(string $type): array
+    {
+        try {
+            // returns [] if none; your Blade shows "Default" itself
+            return app(\App\Support\Appearance\TemplateScanner::class)->list($type);
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+
+
+    /* ----------------------- helpers for post categories ----------------------- */
+
+    protected function categoriesTree(): array
+    {
+        $rows = TermTaxonomy::with('term')
+            ->where('taxonomy', 'category')
+            ->get();
+
+        $childrenByParent = [];
+        foreach ($rows as $r) {
+            $childrenByParent[(int) ($r->parent ?? 0)][] = $r;
+        }
+
+        $out = [];
+        $visited = [];
+
+        $walk = function (int $parentId, int $depth) use (&$walk, &$out, &$visited, $childrenByParent) {
+            foreach (($childrenByParent[$parentId] ?? []) as $r) {
+                if (isset($visited[$r->id]))
+                    continue;
+                $visited[$r->id] = true;
+
+                $out[] = [
+                    'id' => (int) $r->id,
+                    'term_id' => (int) $r->term_id,
+                    'name' => optional($r->term)->name ?? ('Term #' . $r->term_id),
+                    'slug' => optional($r->term)->slug,
+                    'parent' => (int) ($r->parent ?? 0),
+                    'depth' => $depth,
+                ];
+
+                $walk((int) $r->id, $depth + 1);
+            }
+        };
+
+        // start from root=0
+        $walk(0, 0);
+
+        // include any orphaned nodes
+        foreach ($rows as $r) {
+            if (!isset($visited[$r->id])) {
+                $walk((int) $r->id, 0);
+            }
+        }
+
+        return $out;
+    }
+
+    protected function selectedCategoryIds(int $postId): array
+    {
+        return DB::table('term_relationships as tr')
+            ->join('term_taxonomies as tt', 'tt.id', '=', 'tr.term_taxonomy_id')
+            ->where('tr.object_id', $postId)
+            ->where('tt.taxonomy', 'category')
+            ->pluck('tr.term_taxonomy_id')
+            ->map(fn($v) => (int) $v)
+            ->all();
     }
 }

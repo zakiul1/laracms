@@ -62,21 +62,58 @@
         </div>
 
         {{-- Template (Pages only) --}}
-        @if ($isPage)
+        @if ($type === 'page')
+            @php $hasTemplates = !empty($templates ?? []); @endphp
+
             <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
                 <label class="block text-sm mb-1">Template</label>
-                <select name="template"
-                    class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
-                    <option value="">Default</option>
-                    @foreach ($templates ?? [] as $value => $label)
-                        <option value="{{ $value }}" @selected(old('template', $post->template) === $value)>{{ $label }}</option>
-                    @endforeach
-                </select>
-                @error('template')
-                    <p class="text-red-600 text-xs mt-1">{{ $message }}</p>
-                @enderror
+
+                @if ($hasTemplates)
+                    <select name="template"
+                        class="w-full border border-outline rounded-radius bg-surface px-2 py-2 dark:border-outline-dark dark:bg-surface-dark/50">
+                        <option value="">Default</option>
+                        @foreach ($templates as $value => $label)
+                            <option value="{{ $value }}" @selected(old('template', $post->template ?? '') === $value)>
+                                {{ $label }}
+                            </option>
+                        @endforeach
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Auto-discovers from any of:
+                    </p>
+                    <ul class="mt-1 text-xs text-gray-500 list-disc pl-5 space-y-0.5">
+                        <li><code>resources/views/themes/{{ theme_slug() }}/views/pages/templates/*.blade.php</code>
+                        </li>
+                        <li><code>resources/views/themes/{{ theme_slug() }}/templates/page/*.blade.php</code></li>
+                        <li><code>resources/views/themes/{{ theme_slug() }}/pages/*.blade.php</code></li>
+                        {{-- legacy/alt layouts also supported:
+                     resources/themes/{{ theme_slug() }}/views/pages/templates/*.blade.php, etc. --}}
+                    </ul>
+                @else
+                    <div class="text-xs text-amber-600">
+                        No page templates found for theme <span class="font-medium">{{ theme_slug() }}</span>.
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">
+                        Create a Blade file in one of these paths and add a header like:
+                    </p>
+                    <pre class="text-xs bg-black/5 dark:bg-white/5 p-2 rounded-md overflow-x-auto">
+{{-- Template: Full Width --}}
+{{-- For: page --}}</pre>
+                    <ul class="mt-1 text-xs text-gray-500 list-disc pl-5 space-y-0.5">
+                        <li><code>resources/views/themes/{{ theme_slug() }}/views/pages/templates/your-file.blade.php</code>
+                        </li>
+                        <li><code>resources/views/themes/{{ theme_slug() }}/templates/page/your-file.blade.php</code>
+                        </li>
+                        <li><code>resources/views/themes/{{ theme_slug() }}/pages/your-file.blade.php</code></li>
+                    </ul>
+                    <p class="mt-1 text-xs text-gray-500">
+                        After adding files: <code>php artisan view:clear && php artisan cache:clear && php artisan
+                            config:clear</code>
+                    </p>
+                @endif
             </div>
         @endif
+
 
         {{-- SEO Settings --}}
         <div class="rounded-radius border border-outline dark:border-outline-dark p-3">

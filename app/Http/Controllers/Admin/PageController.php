@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use App\Support\Appearance\TemplateScanner;
+use App\Support\Appearance\ThemeManager;
+use Illuminate\Support\Str;
 
 class PageController extends BaseContentController
 {
@@ -178,7 +181,10 @@ class PageController extends BaseContentController
         DB::table('post_media')->insert($rows);
     }
 
-    /** Mirror legacy featured to Spatie so conversions run */
+    /**
+     * Mirror legacy featured to Spatie so conversions run,
+     * WITHOUT moving/deleting the original legacy file.
+     */
     protected function syncSpatieFeaturedFromLegacy(Post $page): void
     {
         if (!$this->spatieMediaReady())
@@ -192,6 +198,23 @@ class PageController extends BaseContentController
         if (!$legacy)
             return;
 
+        // Prefer non-destructive add from the legacy disk/path
+        $disk = $legacy->disk ?: 'public';
+        $relPath = $legacy->path ?? $legacy->file_path ?? null;
+
+        if ($relPath && method_exists($page, 'addMediaFromDisk')) {
+            try {
+                $page->addMediaFromDisk($relPath, $disk)
+                    ->preservingOriginal()                  // do NOT move/remove the legacy file
+                    ->withResponsiveImages()
+                    ->toMediaCollection('images');
+                return;
+            } catch (\Throwable $e) {
+                // fall through to absolute path approach
+            }
+        }
+
+        // Fallback: absolute path (still preserve original)
         $path = $this->resolveLegacyMediaAbsolutePath($legacy);
         if (!$path || !is_file($path))
             return;
@@ -203,6 +226,7 @@ class PageController extends BaseContentController
         if (method_exists($page, 'addMedia')) {
             try {
                 $page->addMedia($path)
+                    ->preservingOriginal()                  // keep legacy file intact
                     ->withResponsiveImages()
                     ->toMediaCollection('images');
             } catch (\Throwable $e) {
@@ -256,12 +280,125 @@ class PageController extends BaseContentController
         return null;
     }
 
-    /** Provide template dropdown options */
-    protected function templateOptions(string $type): array
+    /** Provide template dropdown options (scanner-first, with robust fallback) */
+    protected function templateOptions(string $type = 'page'): array
     {
-        $cfg = config("theme.templates.$type");
-        return is_array($cfg) && !empty($cfg) ? $cfg : [];
+        // 1) Prefer the dedicated scanner (handles your paths & headers)
+        try {
+            $opts = app(TemplateScanner::class)->list($type === 'post' ? 'post' : 'page');
+            if (!empty($opts)) {
+                return $opts;
+            }
+        } catch (\Throwable $e) {
+            // ignore and fall back
+        }
+
+        // 2) Fallback: on-disk scan across common layouts
+        $slug = '';
+        try {
+            $slug = (string) app(ThemeManager::class)->activeSlug();
+        } catch (\Throwable $e) {
+        }
+        if ($slug === '') {
+            $slug = (string) (config('appearance.active_theme') ?? env('APP_THEME', 'default'));
+        }
+        if ($slug === '') {
+            return [];
+        }
+
+        // Candidate roots
+        $roots = [];
+        $r1 = resource_path("views/themes/{$slug}"); // /resources/views/themes/<slug>
+        $r2 = resource_path("themes/{$slug}");       // /resources/themes/<slug> (alt layout)
+        foreach ([$r1, $r2] as $root) {
+            if (is_dir($root)) {
+                $roots[] = $root;
+                if (is_dir($root . '/views')) {
+                    $roots[] = $root . '/views';     // some themes nest another /views
+                }
+            }
+        }
+        if (!$roots) {
+            return [];
+        }
+
+        // Patterns (page type)
+        $patterns = [
+            '/templates/page/*.blade.php',
+            '/pages/*.blade.php',
+            '/pages/templates/*.blade.php',   // your current path
+            '/page/templates/*.blade.php',
+            '/templates/pages/*.blade.php',
+            '/page-*.blade.php',
+        ];
+
+        $found = [];
+        foreach ($roots as $root) {
+            foreach ($patterns as $p) {
+                foreach ((glob($root . $p) ?: []) as $path) {
+                    if (is_file($path)) {
+                        $found[$this->normalizePath($path)] = true;
+                    }
+                }
+            }
+        }
+
+        $options = [];
+        foreach (array_keys($found) as $path) {
+            $file = basename($path, '.blade.php'); // ex: full-width
+            if ($file === 'default' || str_starts_with($file, '_')) {
+                continue; // skip partials
+            }
+
+            $label = Str::of($file)->replace(['-', '_'], ' ')->title()->value();
+            $head = @file_get_contents($path, false, null, 0, 4096) ?: '';
+
+            // Prefer header-provided label(s)
+            if (preg_match('/\{\-\-\s*Template\s*:\s*(.+?)\s*\-\-\}/is', $head, $m)) {
+                $label = trim($m[1]);
+            } elseif (preg_match('/\{\-\-\s*Template\s*Name\s*:\s*(.+?)\s*\-\-\}/is', $head, $m2)) {
+                $label = trim($m2[1]);
+            }
+
+            // Respect scoping: For|Types|PostType: page|post
+            $scoped = $this->parseTypesFromHeader($head);
+            if ($scoped && !in_array('page', $scoped, true)) {
+                continue;
+            }
+
+            // Use file slug as the saved value (matches your form & renderer)
+            $options[$file] = $label;
+        }
+
+        ksort($options, SORT_NATURAL | SORT_FLAG_CASE);
+        return $options;
     }
+
+    // ---- small helpers for fallback ----
+
+    protected function normalizePath(string $p): string
+    {
+        return str_replace('\\', '/', $p);
+    }
+
+    protected function parseTypesFromHeader(string $head): array
+    {
+        $keys = ['For', 'Types', 'PostType'];
+        $out = [];
+        foreach ($keys as $k) {
+            if (preg_match('/\{\-\-\s*' . $k . '\s*:\s*(.+?)\s*\-\-\}/is', $head, $m)) {
+                $vals = preg_split('/[,|]/', $m[1]) ?: [];
+                foreach ($vals as $v) {
+                    $v = Str::lower(trim($v));
+                    if ($v !== '') {
+                        $out[$v] = true;
+                    }
+                }
+            }
+        }
+        return array_keys($out);
+    }
+
     public function destroy(Post $page)
     {
         abort_unless($page->type === 'page', 404);
@@ -271,5 +408,4 @@ class PageController extends BaseContentController
 
         return redirect()->route('admin.pages.index')->with('success', 'Page deleted.');
     }
-
 }
