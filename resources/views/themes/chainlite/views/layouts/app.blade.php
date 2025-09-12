@@ -16,6 +16,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>{{ $title }}</title>
+
     @if ($desc)
         <meta name="description" content="{{ $desc }}">
     @endif
@@ -36,18 +37,24 @@
     <meta name="robots"
         content="{{ $seo['robots_index'] ?? true ? 'index' : 'noindex' }}, {{ $seo['robots_follow'] ?? true ? 'follow' : 'nofollow' }}">
 
-    @vite(['resources/themes/chainlite/theme.css', 'resources/themes/chainlite/theme.js'])
+    {{-- WordPress-like: print enqueued styles/scripts for <head> --}}
+    @vite('resources/views/themes/chainlite/src/theme.css')
+    {!! theme_head() !!}
     @stack('head')
 </head>
 
-<body class="cf-bg-white cf-text-slate-800">
+<body class="bg-white text-slate-800">
     @include('theme::partials.header')
 
-    <main id="content" class="cf-min-h-[60vh]">
+    <main id="content" class="min-h-[60vh]">
+        <div class="text-red-500 underline">Red</div>
         @yield('content')
     </main>
 
     @include('theme::partials.footer')
+
+    {{-- Footer scripts --}}
+    {!! theme_footer() !!}
     @stack('scripts')
 </body>
 

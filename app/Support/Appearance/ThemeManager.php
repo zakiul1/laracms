@@ -25,6 +25,12 @@ class ThemeManager
         'screenshot.webp',
     ];
 
+    /** Candidate bootstrap files inside a theme (first found is required_once) */
+    private const BOOT_CANDIDATES = [
+        'functions.php',
+        'bootstrap.php',
+    ];
+
     /** True if the themes table exists (safe during early boot/composer scripts) */
     private function themesTableReady(): bool
     {
@@ -148,6 +154,7 @@ class ThemeManager
         Cache::forever(self::CACHE_ACTIVE_SLUG, $slug);
         $this->writeActiveHint($slug);
 
+        // Bind views + load theme bootstrap
         $this->rebindViewNamespace($slug);
     }
 
@@ -237,6 +244,7 @@ class ThemeManager
 
     /**
      * Bind "theme::" to active (or fallback when none).
+     * Also loads theme bootstrap (functions.php) from either root.
      * Always append the fallback as a final namespace to avoid hard crashes for missing partials.
      */
     public function rebindViewNamespace(?string $slug = null): void
@@ -246,24 +254,22 @@ class ThemeManager
         $paths = [];
         if ($slug) {
             $primary = $this->viewsPath($slug);
-            if (is_dir($primary)) {
+            if (is_dir($primary))
                 $paths[] = $primary;
-            }
 
             $res = resource_path("views/themes/{$slug}");
-            if (is_dir($res)) {
+            if (is_dir($res))
                 $paths[] = is_dir($res . '/views') ? ($res . '/views') : $res;
-            }
         }
 
-        // Always add fallback at the end (lowest priority)
         $paths[] = $this->fallbackViewsPath();
-
-        // Deduplicate while preserving order
         $paths = array_values(array_unique($paths));
 
-        View::replaceNamespace('theme', $paths);
+        \Illuminate\Support\Facades\View::replaceNamespace('theme', $paths);
         app('view.finder')->flush();
+
+        // ✅ include theme bootstrap so enqueue listeners are registered
+        $this->includeThemeBootstrap($slug);
     }
 
     /** Read metadata from theme.json or config.php in a theme directory */
@@ -281,7 +287,12 @@ class ThemeManager
         return [];
     }
 
-    /** Install a theme ZIP to /themes */
+    /**
+     * Install a theme ZIP.
+     * - Supports zips that already contain a top-level folder.
+     * - Avoids double-nesting by extracting to a temp dir, then moving into /themes/<slug>.
+     * - Returns the resolved slug.
+     */
     public function installZip(string $uploadedZipFullPath): string
     {
         $zip = new ZipArchive();
@@ -289,18 +300,46 @@ class ThemeManager
             throw new \RuntimeException('Invalid theme zip');
         }
 
-        // Try to detect the top-level folder name; fallback to filename slug
+        // Resolve slug: prefer the top-level folder name if present, else filename
         $first = rtrim($zip->getNameIndex(0) ?: '', '/');
-        $guessed = $first && str_contains($first, '/') ? explode('/', $first, 2)[0] : $first;
-        $slug = Str::slug(basename($guessed ?: pathinfo($uploadedZipFullPath, PATHINFO_FILENAME)));
+        $top = $first && str_contains($first, '/') ? explode('/', $first, 2)[0] : $first;
+        $slug = Str::slug(basename($top ?: pathinfo($uploadedZipFullPath, PATHINFO_FILENAME)));
 
-        // Extract to basePath/{slug}
-        $target = $this->basePath() . "/{$slug}";
-        if (!is_dir($target)) {
-            @mkdir($target, 0775, true);
+        // Extract to temp dir
+        $tempBase = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR);
+        $tempDir = $tempBase . DIRECTORY_SEPARATOR . 'theme_install_' . uniqid();
+        @mkdir($tempDir, 0775, true);
+        if (!is_dir($tempDir)) {
+            $zip->close();
+            throw new \RuntimeException('Failed to create temporary directory for extraction.');
         }
-        $zip->extractTo($target);
+
+        if (!$zip->extractTo($tempDir)) {
+            $zip->close();
+            $this->rrmdir($tempDir);
+            throw new \RuntimeException('Failed to extract theme zip.');
+        }
         $zip->close();
+
+        // Determine actual source root inside the zip
+        $extractedRoot = $tempDir;
+        $entries = array_values(array_diff(scandir($tempDir) ?: [], ['.', '..']));
+        if (count($entries) === 1 && is_dir($tempDir . DIRECTORY_SEPARATOR . $entries[0])) {
+            // Zip had a top-level folder; use it
+            $extractedRoot = $tempDir . DIRECTORY_SEPARATOR . $entries[0];
+        }
+
+        // Final target: /themes/<slug>
+        $target = $this->basePath() . "/{$slug}";
+        if (is_dir($target)) {
+            // Replace existing theme directory
+            $this->rrmdir($target);
+        }
+        @mkdir(dirname($target), 0775, true);
+
+        // Move extracted root into target
+        $this->moveDirectory($extractedRoot, $target);
+        $this->rrmdir($tempDir);
 
         // Safe if table doesn't exist yet
         $this->syncDb();
@@ -346,7 +385,6 @@ class ThemeManager
             resource_path("views/themes/{$slug}"),
             resource_path("views/themes/{$slug}/views"),
         ];
-        // Keep only unique, existing directories (but we still want non-existing order for discovery)
         return array_values(array_unique($paths));
     }
 
@@ -368,6 +406,28 @@ class ThemeManager
         return null;
     }
 
+    /** Return possible asset root directories inside a theme (useful for controllers/routes) */
+    public function assetRoots(string $slug): array
+    {
+        $roots = [];
+        foreach ([
+            $this->basePath() . "/{$slug}",
+            resource_path("views/themes/{$slug}"),
+        ] as $root) {
+            foreach (['assets/dist', 'assets'] as $sub) {
+                $p = $root . '/' . $sub;
+                if (is_dir($p)) {
+                    $roots[] = $p;
+                }
+            }
+        }
+        return array_values(array_unique($roots));
+    }
+
+    /* -------------------------------------------------------------
+     | Internals
+     * ------------------------------------------------------------*/
+
     protected function rrmdir(string $dir): void
     {
         foreach (array_diff(scandir($dir) ?: [], ['.', '..']) as $f) {
@@ -377,6 +437,21 @@ class ThemeManager
         @rmdir($dir);
     }
 
+    protected function moveDirectory(string $from, string $to): void
+    {
+        @mkdir($to, 0775, true);
+        foreach (array_diff(scandir($from) ?: [], ['.', '..']) as $f) {
+            $src = $from . DIRECTORY_SEPARATOR . $f;
+            $dst = $to . DIRECTORY_SEPARATOR . $f;
+            if (is_dir($src)) {
+                $this->moveDirectory($src, $dst);
+            } else {
+                @rename($src, $dst) || @copy($src, $dst);
+                @unlink($src);
+            }
+        }
+    }
+
     /** Write a small hint for the active theme (purely optional, used by ops/tools) */
     private function writeActiveHint(?string $slug): void
     {
@@ -384,6 +459,28 @@ class ThemeManager
             Storage::disk('local')->put('appearance_active_theme.txt', (string) $slug);
         } catch (\Throwable $e) {
             // ignore
+        }
+    }
+
+    /**
+     * Include theme bootstrap (functions.php/bootstrap.php) once.
+     * Looks in BOTH roots: /themes/<slug> and /resources/views/themes/<slug>.
+     */
+    private function includeThemeBootstrap(?string $slug): void
+    {
+        if (!$slug)
+            return;
+        foreach ([
+            base_path("themes/{$slug}/functions.php"),
+            resource_path("views/themes/{$slug}/functions.php"),
+            // legacy support:
+            base_path("themes/{$slug}/theme.php"),
+            resource_path("views/themes/{$slug}/theme.php"),
+        ] as $p) {
+            if (is_file($p)) {
+                require_once $p;
+                break;
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ThemeAssetController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Http\Request;
 use App\Support\Appearance\ThemeManager;
@@ -43,12 +44,19 @@ use App\Http\Controllers\Admin\Settings\SettingsController;
 use App\Http\Controllers\Admin\Tools\ThemeFileEditorController;
 use App\Http\Controllers\Admin\Tools\PluginFileEditorController;
 
-/** ✅ NEW: Front-end controller for public pages/posts */
+/** Front-end controller for public pages/posts */
 use App\Http\Controllers\FrontController;
 
 // --------------------------------------------------
 // Public
 // --------------------------------------------------
+
+// ✅ Serve theme assets BEFORE any catch-all routes
+Route::get('/theme-assets/{slug}/{path}', [ThemeAssetController::class, 'show'])
+    ->where('slug', '[A-Za-z0-9\-_]+')
+    ->where('path', '.*')
+    ->name('theme.asset');
+
 // Public site home: render active theme's home; otherwise show a friendly fallback
 Route::get('/', function (ThemeManager $themes) {
     // Keep the "theme::" namespace pointing to the right place each request
@@ -394,5 +402,8 @@ Route::get('/category/{slug}', [FrontController::class, 'category'])
 
 // Catch-all single (Page → Post) with exclusions
 Route::get('/{slug}', [FrontController::class, 'single'])
-    ->where('slug', '^(?!admin|login|logout|register|password|profile|settings|appearance|plugins|tools|widgets|themes|storage|api|preview|debug).+$')
+    ->where(
+        'slug',
+        '^(?!admin|login|logout|register|password|profile|settings|appearance|plugins|tools|widgets|themes|storage|api|preview|debug|theme-assets).+$'
+    )
     ->name('front.single');

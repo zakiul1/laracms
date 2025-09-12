@@ -4,7 +4,9 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+         "theme:build": "node ./node_modules/tailwindcss/lib/cli.js -i resources/views/themes/chainlite/src/theme.css -o resources/views/themes/chainlite/assets/dist/theme.css --minify",
+    "theme:watch": "node ./node_modules/tailwindcss/lib/cli.js -i resources/views/themes/chainlite/src/theme.css -o resources/views/themes/chainlite/assets/dist/theme.css --watch"
     },
     "devDependencies": {
         "@alpinejs/focus": "^3.14.9",
@@ -17,7 +19,7 @@
         "concurrently": "^9.0.1",
         "laravel-vite-plugin": "^2.0.0",
         "penguinui": "^1.7.51",
-        "tailwindcss": "^4.1.11",
+        "tailwindcss": "^4.1.13",
         "vite": "^7.0.4"
     },
     "dependencies": {

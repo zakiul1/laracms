@@ -9,7 +9,7 @@
         </a>
 
         {{-- Primary nav (center / desktop) --}}
-        <nav class="hidden md:block justify-self-center">
+        <nav class="hidden md:block justify-self-center ">
             {!! render_menu('header', [
                 'ul_class' => 'flex items-center gap-8 lg:gap-10',
                 'li_class' => '',

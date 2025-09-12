@@ -9,34 +9,35 @@ export default defineConfig(({ mode }) => {
 
     return {
         plugins: [
+            tailwindcss(), // Tailwind v4
             laravel({
+                // ✅ Inputs at the REAL paths
                 input: [
-                    // Admin bundles
+                    // Admin bundles (keep if you use them)
                     "resources/css/app.css",
                     "resources/js/app.js",
 
-                    // Theme bundles
-                    "resources/themes/chainlite/theme.css",
-                    "resources/themes/chainlite/theme.js",
+                    // Theme CSS (Tailwind entry)
+                    "resources/views/themes/chainlite/src/theme.css",
+
+                    // If you have a theme JS entry, uncomment next line and ensure the file exists:
+                    // "resources/views/themes/chainlite/src/theme.js",
                 ],
-                // Watch theme blades & assets explicitly
+                // Refresh on changes (this already covers the theme under views/)
                 refresh: [
                     "routes/**",
                     "app/Http/Controllers/**",
                     "resources/views/**",
-                    "resources/themes/**",
                 ],
             }),
-            tailwindcss(), // Tailwind v4 plugin
         ],
         server: {
             hmr: {
-                // Set VITE_DISABLE_HMR_OVERLAY=1 in .env to hide the red overlay temporarily
-                overlay: !disableOverlay,
+                overlay: !disableOverlay, // set VITE_DISABLE_HMR_OVERLAY=1 in .env to hide overlay
             },
         },
         css: {
-            devSourcemap: true, // handy during styling
+            devSourcemap: true,
         },
     };
 });

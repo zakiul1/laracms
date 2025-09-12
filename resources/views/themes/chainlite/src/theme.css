@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Tell Tailwind where to scan for classes (relative to THIS file) */
+@source "../**/*.{blade.php,php,js}";
+@source "../partials/**/*.{blade.php,php,js}";
+@source "../layouts/**/*.{blade.php,php,js}";
+@source "../../**/*.{blade.php,php,js}";

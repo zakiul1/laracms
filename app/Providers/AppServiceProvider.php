@@ -108,5 +108,7 @@ class AppServiceProvider extends ServiceProvider
                 // add more console commands here if needed
             ]);
         }
+
+        $themes->rebindViewNamespace();
     }
 }
