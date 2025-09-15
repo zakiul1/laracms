@@ -47,7 +47,7 @@
     @include('theme::partials.header')
 
     <main id="content" class="min-h-[60vh]">
-        <div class="text-red-500 underline">Red</div>
+
         @yield('content')
     </main>
 

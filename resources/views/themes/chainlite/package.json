@@ -1,0 +1,25 @@
+{
+  "name": "@laracms-theme/chainlite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chainlite theme build (Tailwind v4) – isolated from admin/Vite.",
+  "author": "You",
+  "license": "MIT",
+  "scripts": {
+    "prebuild": "node -e \"require('fs').mkdirSync('assets/dist', { recursive: true })\"",
+    "build:css": "tailwindcss -i ./src/theme.css -o ./assets/dist/theme.css --minify",
+    "postbuild:css": "node ./build.js",
+    "build": "npm run prebuild && npm run build:css && npm run postbuild:css",
+    "watch": "tailwindcss -i ./src/theme.css -o ./assets/dist/theme.css -w",
+    "clean": "node -e \"try{require('fs').rmSync('assets/dist', { recursive: true, force: true })}catch(e){}\" && node -e \"require('fs').mkdirSync('assets/dist', { recursive: true })\"",
+    "doctor": "tailwindcss -v && node -e \"console.log('node', process.version)\" && npm -v"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "latest",
+    "tailwindcss": "latest"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

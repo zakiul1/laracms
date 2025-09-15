@@ -2,9 +2,9 @@
 
 namespace App\Support\Media;
 
-use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Spatie\Image\Enums\Fit;
 
 trait HasOptimizedImages
 {
@@ -16,55 +16,36 @@ trait HasOptimizedImages
             ->acceptsMimeTypes([
                 'image/jpeg',
                 'image/png',
+                'image/gif',
                 'image/webp',
-                'image/avif'
-            ])
-            ->useDisk(config('media-library.disk_name', 'public'))
-            ->withResponsiveImages(); // keep if you like the tiny blur + auto widths
+                'image/avif',
+            ]);
     }
 
-    public function registerMediaConversions(Media $media = null): void
+    public function registerMediaConversions(?Media $media = null): void
     {
-        // If spatie/image isn't installed yet, just skip conversions gracefully
-        if (!class_exists(\Spatie\Image\Manipulations::class)) {
-            return;
-        }
+        $widths = [320, 480, 640, 768, 1024, 1280, 1536, 1920];
 
-        $M = \Spatie\Image\Manipulations::class;
+        foreach ($widths as $w) {
+            // ✅ Always JPEG for width-based set
+            $this->addMediaConversion("w{$w}")
+                ->format('jpg')
+                ->width($w)
+                ->performOnCollections('images')
+                ->nonQueued();
 
-        // Choose the widths you want available for <img srcset>/<picture>
-        $breakpoints = [320, 480, 768, 1024, 1280, 1536, 1920];
-
-        foreach ($breakpoints as $w) {
-            // JPEG fallback (good for older browsers / e-mail etc.)
-            $this->addMediaConversion("w{$w}_jpg")
-                ->fit($M::FIT_MAX, $w, $w)
-                ->format($M::FORMAT_JPG)
-                ->quality(82)
-                ->performOnCollections('images');
-
-            // WebP primary
+            // ✅ WebP counterpart
             $this->addMediaConversion("w{$w}_webp")
-                ->fit($M::FIT_MAX, $w, $w)
-                ->format($M::FORMAT_WEBP)
-                ->quality(80)
-                ->performOnCollections('images');
-
-            // AVIF (optional; only if your spatie/image supports it)
-            if (\defined('\Spatie\Image\Manipulations::FORMAT_AVIF')) {
-                $this->addMediaConversion("w{$w}_avif")
-                    ->fit($M::FIT_MAX, $w, $w)
-                    ->format($M::FORMAT_AVIF)
-                    ->quality(50) // AVIF is efficient; lower quality is usually fine
-                    ->performOnCollections('images');
-            }
+                ->format('webp')
+                ->width($w)
+                ->performOnCollections('images')
+                ->nonQueued();
         }
 
-        // Square admin/thumb for grids
         $this->addMediaConversion('thumb_webp')
-            ->fit($M::FIT_CROP, 300, 300)
-            ->format($M::FORMAT_WEBP)
-            ->quality(80)
-            ->performOnCollections('images');
+            ->format('webp')
+            ->fit(Fit::Crop, 300, 300)
+            ->performOnCollections('images')
+            ->nonQueued();
     }
 }

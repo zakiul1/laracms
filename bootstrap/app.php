@@ -4,6 +4,9 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 
+// ⬇️ Add your console command class here
+use App\Console\Commands\MigrateOfferingsLegacyMedia;
+
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__ . '/../routes/web.php',
@@ -16,10 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
         ]);
 
-        // (optionally) You can push global / group middleware here as well:
+        // (optionally) push global / group middleware here...
         // $middleware->append(\App\Http\Middleware\YourGlobalMiddleware::class);
-        // $middleware->web( fn($web) => $web->append(...));
-        // $middleware->api( fn($api) => $api->append(...));
+        // $middleware->web(fn ($web) => $web->append(...));
+        // $middleware->api(fn ($api) => $api->append(...));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
@@ -37,7 +40,10 @@ return Application::configure(basePath: dirname(__DIR__))
         App\Providers\WidgetServiceProvider::class,
         App\Providers\SettingsServiceProvider::class,
         \App\Support\Shortcode\ShortcodeServiceProvider::class,
-
-
+    ])
+    // ⬇️ Register class-based Artisan commands here
+    ->withCommands([
+        MigrateOfferingsLegacyMedia::class,
+        // Add more commands here as needed
     ])
     ->create();

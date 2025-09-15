@@ -5,8 +5,10 @@
 @section('content')
     @php
         use Illuminate\Support\Facades\DB;
+        use Illuminate\Support\Str;
+        use Illuminate\Support\Facades\Storage;
 
-        // Only published posts in "product" category
+        // Fetch posts in category=product (published + public)
         $offerings = \App\Models\Post::query()
             ->where('type', 'post')
             ->where('status', 'published')
@@ -20,104 +22,121 @@
                     ->where('tt.taxonomy', 'category')
                     ->where('t.slug', 'product');
             })
+            // Eager load legacy + spatie (media is the Spatie relation)
+            ->with(['featuredMedia', 'gallery', 'media'])
             ->orderByRaw('COALESCE(published_at, created_at) asc')
             ->get();
+
+        // Optional ordering to match your visual layout
+        $preferred = ['womenswear', 'menswear', 'bottoms', 'circular-knitwear', 'outerwear'];
+        $offerings = $offerings
+            ->sortBy(function ($p) use ($preferred) {
+                $idx = array_search(Str::slug($p->title), $preferred, true);
+                return $idx === false ? 999 : $idx;
+            })
+            ->values();
+
+        // Responsive sizes tuned for your layout
+        $sizes = '(min-width: 1280px) 560px, (min-width: 768px) 48vw, 100vw';
     @endphp
 
-    {{-- Hero --}}
-    <section class="cf-container cf-mx-auto cf-max-w-6xl cf-px-4 cf-pt-16 cf-pb-10 cf-text-center">
-        <h1 class="cf-text-4xl md:cf-text-5xl cf-font-semibold cf-tracking-tight">Our Offering</h1>
-        <p class="cf-mt-5 cf-text-base md:cf-text-lg cf-text-gray-600">
+    {{-- Static hero --}}
+    <section class="max-w-5xl mx-auto px-4 pt-16 pb-10 text-center">
+        <h1 class="text-4xl md:text-5xl font-semibold tracking-tight text-slate-900">Our Offering</h1>
+        <p class="mt-5 text-base md:text-lg text-slate-600 leading-relaxed max-w-3xl mx-auto">
             We're delighted to support the development of various types of Men's, Women's, and Kidswear, and our
-            capabilities
-            extend beyond what we showcase below. Don't hesitate to reach out for bespoke solutions tailored to your needs.
+            capabilities extend beyond what we showcase below. Don't hesitate to reach out for bespoke solutions
+            tailored to your needs.
         </p>
     </section>
 
-    {{-- Alternating blocks --}}
-    <section class="cf-container cf-mx-auto cf-max-w-6xl cf-px-4 cf-space-y-20 md:cf-space-y-28">
-        @foreach ($offerings as $i => $item)
-            @php
-                // Use Spatie media (synced in controllers) for the responsive component
-                $media = method_exists($item, 'getFirstMedia') ? $item->getFirstMedia('images') : null;
-                $odd = $i % 2 === 0; // first row: image left
-                // Responsive sizes string similar to the design layout
-                $sizes = '(min-width: 1024px) 560px, (min-width: 768px) 50vw, 100vw';
-            @endphp
+    @if ($offerings->isEmpty())
+        <section class="max-w-4xl mx-auto px-4 pb-16">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+                No offerings found in the “product” category yet.
+            </div>
+        </section>
+    @else
+        {{-- Alternating image/text blocks --}}
+        <section class="max-w-6xl mx-auto px-4 space-y-24 md:space-y-32">
+            @foreach ($offerings as $i => $item)
+                @php
+                    // Prefer Spatie media via helper; else legacy
+                    $spatie = $item->spatieFeaturedMedia();
 
-            <div class="cf-grid cf-grid-cols-1 md:cf-grid-cols-2 cf-gap-10 cf-items-center">
-                {{-- Image --}}
-                <div class="{{ $odd ? '' : 'md:cf-order-2' }}">
-                    @if ($media)
-                        <x-media.picture :media="$media" :sizes="$sizes"
-                            class="cf-w-full cf-h-auto cf-rounded cf-object-cover cf-shadow-sm" />
-                    @else
-                        <div
-                            class="cf-aspect-[4/3] cf-w-full cf-rounded cf-bg-gray-100 cf-grid cf-place-items-center cf-text-gray-400">
-                            No image
+                    $legacy = $item->featuredMedia ?? ($item->gallery->first() ?? null);
+                    $legacyUrl = null;
+
+                    if (!$spatie && $legacy) {
+                        $disk = $legacy->disk ?? null;
+                        $candidates = array_filter([
+                            $legacy->url ?? null,
+                            $legacy->path ?? null,
+                            $legacy->file_path ?? null,
+                            $legacy->filepath ?? null,
+                            isset($legacy->dir, $legacy->filename)
+                                ? trim($legacy->dir, '/') . '/' . $legacy->filename
+                                : null,
+                        ]);
+
+                        foreach ($candidates as $cand) {
+                            $cand = ltrim((string) $cand, '/');
+
+                            // Absolute URL
+                            if (preg_match('~^https?://~i', $cand)) {
+                                $legacyUrl = $cand;
+                                break;
+                            }
+
+                            // Disk-specific path
+                            if ($disk && Storage::disk($disk)->exists($cand)) {
+                                $legacyUrl = Storage::disk($disk)->url($cand);
+                                break;
+                            }
+
+                            // Common disks
+                            foreach (['public', 'local', 's3'] as $try) {
+                                if (Storage::disk($try)->exists($cand)) {
+                                    $legacyUrl = Storage::disk($try)->url($cand);
+                                    break 2;
+                                }
+                            }
+
+                            // Public path
+                            if (is_file(public_path($cand))) {
+                                $legacyUrl = asset($cand);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Alternate sides
+                    $reverse = $i % 2 === 1;
+                @endphp
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+                    {{-- Image column --}}
+                    <div class="{{ $reverse ? 'md:order-2' : '' }}">
+                        @if ($spatie || $legacyUrl)
+                            {{-- Use responsive component (prefers Spatie native srcset; falls back to conversions) --}}
+                            <x-media.picture :media="$spatie" :src="$legacyUrl" conversion="w1280" :sizes="$sizes"
+                                :alt="$item->title" class="w-full h-auto rounded-xl object-cover shadow-sm" />
+                        @else
+                            <div class="w-full aspect-[4/3] rounded-xl bg-gray-100 grid place-items-center text-gray-400">
+                                No image
+                            </div>
+                        @endif
+                    </div>
+
+                    {{-- Text column --}}
+                    <div class="max-w-[520px] mx-auto text-center {{ $reverse ? 'md:order-1' : '' }}">
+                        <h2 class="text-2xl md:text-3xl font-medium mb-4 text-slate-900">{{ $item->title }}</h2>
+                        <div class="text-slate-700 leading-7 text-sm md:text-base space-y-3">
+                            {!! apply_filters('the_content', $item->content) !!}
                         </div>
-                    @endif
-                </div>
-
-                {{-- Text --}}
-                <div class="{{ $odd ? '' : 'md:cf-order-1' }}">
-                    <h2 class="cf-text-2xl md:cf-text-3xl cf-font-medium cf-mb-4">{{ $item->title }}</h2>
-                    <div class="prose max-w-none cf-text-gray-700">
-                        {!! apply_filters('the_content', $item->content) !!}
                     </div>
                 </div>
-            </div>
-        @endforeach
-    </section>
-
-    {{-- CTA --}}
-    <section class="cf-container cf-mx-auto cf-max-w-6xl cf-px-4 cf-py-12 md:cf-py-16">
-        <div class="cf-grid md:cf-grid-cols-2 cf-gap-8 cf-rounded cf-bg-[#BFD9F7] cf-p-6 md:cf-p-10">
-            <div>
-                <h3 class="cf-text-2xl md:cf-text-3xl cf-font-semibold">Interested in learning how we can help your
-                    business?</h3>
-                <p class="cf-mt-3 cf-text-gray-700">Get in touch via our contact form to schedule a discovery call.</p>
-            </div>
-            <div>
-                <form action="#" method="post" class="cf-grid cf-grid-cols-1 md:cf-grid-cols-2 cf-gap-4">
-                    @csrf
-                    <div>
-                        <label class="cf-block cf-text-sm cf-mb-1">Name*</label>
-                        <input type="text" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2"
-                            placeholder="Fill in name">
-                    </div>
-                    <div>
-                        <label class="cf-block cf-text-sm cf-mb-1">Email*</label>
-                        <input type="email" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2"
-                            placeholder="Fill in email">
-                    </div>
-                    <div>
-                        <label class="cf-block cf-text-sm cf-mb-1">Phone number</label>
-                        <input type="text" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2"
-                            placeholder="Fill in phone number">
-                    </div>
-                    <div>
-                        <label class="cf-block cf-text-sm cf-mb-1">Address</label>
-                        <input type="text" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2"
-                            placeholder="Fill in address">
-                    </div>
-                    <div class="md:cf-col-span-2">
-                        <label class="cf-block cf-text-sm cf-mb-1">Topic</label>
-                        <input type="text" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2"
-                            placeholder="Type topic here">
-                    </div>
-                    <div class="md:cf-col-span-2">
-                        <label class="cf-block cf-text-sm cf-mb-1">Message</label>
-                        <textarea rows="4" class="cf-w-full cf-border cf-rounded cf-px-3 cf-py-2" placeholder="Type message here..."></textarea>
-                    </div>
-                    <div class="md:cf-col-span-2 cf-pt-2">
-                        <button type="submit"
-                            class="cf-w-full md:cf-w-auto cf-bg-black cf-text-white cf-px-6 cf-py-2 cf-rounded">
-                            Send
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </section>
+            @endforeach
+        </section>
+    @endif
 @endsection

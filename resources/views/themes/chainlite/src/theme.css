@@ -1,7 +1,5 @@
+@config "../tailwind.theme.config.js";
 @import "tailwindcss";
 
-/* Tell Tailwind where to scan for classes (relative to THIS file) */
-@source "../**/*.{blade.php,php,js}";
-@source "../partials/**/*.{blade.php,php,js}";
-@source "../layouts/**/*.{blade.php,php,js}";
-@source "../../**/*.{blade.php,php,js}";
+/* keep your @source lines to scope scanning to this theme only */
+@source "../views/**/*.blade.php";

@@ -5,8 +5,8 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-         "theme:build": "node ./node_modules/tailwindcss/lib/cli.js -i resources/views/themes/chainlite/src/theme.css -o resources/views/themes/chainlite/assets/dist/theme.css --minify",
-    "theme:watch": "node ./node_modules/tailwindcss/lib/cli.js -i resources/views/themes/chainlite/src/theme.css -o resources/views/themes/chainlite/assets/dist/theme.css --watch"
+        "theme:watch": "npm --prefix resources/views/themes/chainlite run watch",
+    "theme:build": "npm --prefix resources/views/themes/chainlite run build"
     },
     "devDependencies": {
         "@alpinejs/focus": "^3.14.9",

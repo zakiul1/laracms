@@ -12,7 +12,9 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use App\Support\Appearance\ThemeManager;
+use App\Models\Media as LegacyMedia;
 
 abstract class BaseContentController extends Controller
 {
@@ -80,6 +82,9 @@ abstract class BaseContentController extends Controller
             $this->syncMetas($post, (array) $r->input('meta', []));
             $this->syncSeo($post, (array) $r->input('seo', []));
 
+            // 🔧 NEW: attach Spatie featured media
+            $this->syncFeaturedMedia($r, $post);
+
             $this->snapshot($post, $r->user());
 
             return redirect()->route($this->routeBase() . '.index')
@@ -124,6 +129,9 @@ abstract class BaseContentController extends Controller
             $this->syncGallery($post, (array) $r->input('gallery', []));
             $this->syncMetas($post, (array) $r->input('meta', []));
             $this->syncSeo($post, (array) $r->input('seo', []));
+
+            // 🔧 NEW: attach/update Spatie featured media
+            $this->syncFeaturedMedia($r, $post);
 
             $this->snapshot($post, $r->user());
 
@@ -210,8 +218,9 @@ abstract class BaseContentController extends Controller
 
         $ttxIds = $incoming->map(function ($raw) {
             $id = (int) $raw;
-            if ($id <= 0)
+            if ($id <= 0) {
                 return null;
+            }
 
             if (TermTaxonomy::where('id', $id)->where('taxonomy', 'category')->exists()) {
                 return $id;
@@ -242,8 +251,9 @@ abstract class BaseContentController extends Controller
         $keep = [];
         foreach ($rows as $row) {
             $key = trim((string) ($row['key'] ?? ''));
-            if ($key === '')
+            if ($key === '') {
                 continue;
+            }
 
             $val = (string) ($row['value'] ?? '');
             $meta = $post->metas()->updateOrCreate(['meta_key' => $key], ['meta_value' => $val]);
@@ -290,8 +300,9 @@ abstract class BaseContentController extends Controller
         $position = 0;
         foreach ($gallery as $mediaId) {
             $mediaId = (int) $mediaId;
-            if ($mediaId <= 0)
+            if ($mediaId <= 0) {
                 continue;
+            }
 
             DB::table('post_media')->insert([
                 'post_id' => $post->id,
@@ -303,6 +314,128 @@ abstract class BaseContentController extends Controller
             ]);
         }
     }
+
+    /**
+     * 🔧 NEW: Sync a Spatie "featured" media item for this post.
+     * Priority:
+     *   1) uploaded file:    input name 'featured_upload'
+     *   2) legacy picker id: input name 'featured_media_id' (points to App\Models\Media)
+     *   3) fall back to first gallery item (copy to 'featured')
+     */
+    protected function syncFeaturedMedia(Request $r, Post $post): void
+    {
+        // (1) Direct upload
+        if ($r->hasFile('featured_upload')) {
+            $post->clearMediaCollection('featured');
+            $post->addMediaFromRequest('featured_upload')
+                ->usingName($r->input('title') ?: 'Featured')
+                ->withResponsiveImages()
+                ->toMediaCollection('featured');
+
+        }
+
+        // (2) Legacy picker id OR DB column
+        $pickId = $r->input('featured_media_id') ?: $post->featured_media_id;
+        if ($pickId) {
+            $legacy = \App\Models\Media::find((int) $pickId);
+            if ($legacy) {
+                $rp = \App\Support\Media\LegacyMediaHelper::resolveDiskAndPath($legacy);
+                if ($rp) {
+                    $post->clearMediaCollection('featured');
+
+                    if (isset($rp['url'])) {
+                        // if your legacy stores absolute URLs (e.g., s3 presigned), download first:
+                        $tmp = tempnam(sys_get_temp_dir(), 'feat_');
+                        file_put_contents($tmp, file_get_contents($rp['url']));
+                        $post->addMedia($tmp)
+                            ->usingName($legacy->title ?? 'Featured')
+                            ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                            ->toMediaCollection('featured');
+                        @unlink($tmp);
+                        return;
+                    }
+
+                    if (!empty($rp['public'])) {
+                        $full = public_path($rp['path']);
+                        if (is_file($full)) {
+                            $post->addMedia($full)
+                                ->usingName($legacy->title ?? 'Featured')
+                                ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                                ->toMediaCollection('featured');
+                            return;
+                        }
+                    }
+
+                    // disk + path
+                    if (!empty($rp['disk']) && !empty($rp['path'])) {
+                        $post->addMediaFromDisk($rp['path'], $rp['disk'])
+                            ->preservingOriginal()
+                            ->usingName($legacy->title ?? 'Featured')
+                            ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                            ->toMediaCollection('featured');
+                        return;
+                    }
+                }
+            }
+        }
+
+        // (3) Fallback: gallery pivot
+        $firstGalleryId = \DB::table('post_media')
+            ->where('post_id', $post->id)
+            ->whereIn('role', ['featured', 'gallery'])
+            ->orderBy('position')
+            ->value('media_id');
+
+        if ($firstGalleryId) {
+            $legacy = \App\Models\Media::find((int) $firstGalleryId);
+            if ($legacy) {
+                $rp = \App\Support\Media\LegacyMediaHelper::resolveDiskAndPath($legacy);
+                if ($rp) {
+                    $post->clearMediaCollection('featured');
+
+                    if (isset($rp['url'])) {
+                        $tmp = tempnam(sys_get_temp_dir(), 'feat_');
+                        file_put_contents($tmp, file_get_contents($rp['url']));
+                        $post->addMedia($tmp)
+                            ->usingName($legacy->title ?? 'Featured')
+                            ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                            ->toMediaCollection('featured');
+                        @unlink($tmp);
+                        return;
+                    }
+
+                    if (!empty($rp['public'])) {
+                        $full = public_path($rp['path']);
+                        if (is_file($full)) {
+                            $post->addMedia($full)
+                                ->usingName($legacy->title ?? 'Featured')
+                                ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                                ->toMediaCollection('featured');
+                            return;
+                        }
+                    }
+
+                    if (!empty($rp['disk']) && !empty($rp['path'])) {
+                        $post->addMediaFromDisk($rp['path'], $rp['disk'])
+                            ->preservingOriginal()
+                            ->usingName($legacy->title ?? 'Featured')
+                            ->withCustomProperties(['alt' => $legacy->alt ?? $legacy->title ?? $post->title])
+                            ->toMediaCollection('featured');
+                        return;
+                    }
+                }
+            }
+        }
+
+        // (4) Last fallback: copy from Spatie 'images'
+        if (!$post->getFirstMedia('featured')) {
+            if ($first = $post->getFirstMedia('images')) {
+                $post->clearMediaCollection('featured');
+                $first->copy($post, 'featured');
+            }
+        }
+    }
+
 
     protected function snapshot(Post $post, $user): void
     {
@@ -360,8 +493,9 @@ abstract class BaseContentController extends Controller
                 ->exists()
         ) {
             $candidate = "{$base}-{$i}";
-            if (++$i > 200)
+            if (++$i > 200) {
                 break;
+            }
         }
 
         return $candidate;
@@ -384,8 +518,6 @@ abstract class BaseContentController extends Controller
         }
     }
 
-
-
     /* ----------------------- helpers for post categories ----------------------- */
 
     protected function categoriesTree(): array
@@ -404,8 +536,9 @@ abstract class BaseContentController extends Controller
 
         $walk = function (int $parentId, int $depth) use (&$walk, &$out, &$visited, $childrenByParent) {
             foreach (($childrenByParent[$parentId] ?? []) as $r) {
-                if (isset($visited[$r->id]))
+                if (isset($visited[$r->id])) {
                     continue;
+                }
                 $visited[$r->id] = true;
 
                 $out[] = [
