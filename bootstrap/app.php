@@ -19,8 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
         ]);
 
-        // (optionally) push global / group middleware here...
-        // $middleware->append(\App\Http\Middleware\YourGlobalMiddleware::class);
+        // 🔐 Force installer until APP_INSTALLED=true (or installed=true) in .env
+        $middleware->append(\App\Http\Middleware\RedirectIfNotInstalled::class);
+
+        // (optionally) push other global / group middleware here...
         // $middleware->web(fn ($web) => $web->append(...));
         // $middleware->api(fn ($api) => $api->append(...));
     })

@@ -388,6 +388,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->as('admin.')->group(funct
 });
 
 require __DIR__ . '/auth.php';
+require __DIR__ . '/install.php';
+
 
 /* --------------------------------------------------
  | Public content routes (Pages/Posts) – must be last
