@@ -74,7 +74,7 @@ class MediaController extends Controller
                     $w->where(function ($q) {
                         $q->where('mime', 'like', 'application/%')
                             ->orWhere('mime', 'like', 'text/%')
-                            ->orWhere('mime', 'like', 'model/%'); // pdf/office/etc
+                            ->orWhere('mime', 'like', 'model/%');
                     });
                 }
             });
@@ -85,7 +85,6 @@ class MediaController extends Controller
                     $query->where('mime', 'like', 'image/%');
                 }
             } else {
-                // default true (your previous behavior)
                 $query->where('mime', 'like', 'image/%');
             }
         }
@@ -169,8 +168,11 @@ class MediaController extends Controller
             if (!$file->isValid()) {
                 continue;
             }
+
+            // Store original
             $path = $file->store($dir, $disk);
 
+            // Create db row
             $media = new Media();
             $media->created_by = $request->user()->id ?? null;
             $media->disk = $disk;
@@ -182,25 +184,29 @@ class MediaController extends Controller
             $media->alt = null;
             $media->caption = null;
 
-            // Try to capture dimensions for images
+            // Image dimensions
             try {
                 if (Str::startsWith($media->mime, 'image/')) {
                     [$w, $h] = @getimagesize($file->getRealPath()) ?: [null, null];
                     $media->width = $w;
                     $media->height = $h;
                 }
-            } catch (\Throwable $e) {
-                // ignore dimension failures
+            } catch (\Throwable) {
+                // ignore
             }
 
             $media->save();
 
+            // Relate to category if passed
             if ($ttId = (int) $request->input('term_taxonomy_id', 0)) {
                 TermRelationship::updateOrCreate(
                     ['object_id' => $media->id, 'term_taxonomy_id' => $ttId],
                     ['sort_order' => 0]
                 );
             }
+
+            // --- Generate a small WEBP thumbnail for the grid (non-blocking if WEBP not supported) ---
+            $this->makeWebpThumb($media);
 
             $added[] = $media->fresh();
         }
@@ -211,8 +217,8 @@ class MediaController extends Controller
         // Keep your old shape for back-compat
         return response()->json([
             'status' => 'ok',
-            'items' => $added,   // old
-            'uploaded' => $uploaded // new
+            'items' => $added,     // old
+            'uploaded' => $uploaded, // new
         ]);
     }
 
@@ -224,7 +230,7 @@ class MediaController extends Controller
             'name' => ['nullable', 'string', 'max:255'], // back-compat
             'alt' => ['nullable', 'string', 'max:255'],
             'caption' => ['nullable', 'string', 'max:2000'],
-            'description' => ['nullable', 'string'],            // optional column
+            'description' => ['nullable', 'string'],
             'term_taxonomy_id' => ['nullable', 'integer'],
         ]);
 
@@ -239,7 +245,6 @@ class MediaController extends Controller
             $media->caption = $data['caption'];
         }
 
-        // Only set description if the column exists
         if (array_key_exists('description', $data) && $this->mediaHasColumn('description')) {
             $media->description = $data['description'];
         }
@@ -282,14 +287,16 @@ class MediaController extends Controller
         $disk = 'public';
         $file = $request->file('file');
 
+        // delete old original
         if ($media->path && $media->disk) {
             try {
                 Storage::disk($media->disk)->delete($media->path);
-            } catch (\Throwable $e) {
+            } catch (\Throwable) {
                 // ignore
             }
         }
 
+        // store new original
         $path = $file->store('media/' . now()->format('Y/m'), $disk);
 
         $media->disk = $disk;
@@ -298,7 +305,6 @@ class MediaController extends Controller
         $media->mime = $file->getMimeType() ?: $file->getClientMimeType();
         $media->size = $file->getSize();
 
-        // try dimensions for images
         try {
             if (Str::startsWith($media->mime, 'image/')) {
                 [$w, $h] = @getimagesize($file->getRealPath()) ?: [null, null];
@@ -307,10 +313,13 @@ class MediaController extends Controller
             } else {
                 $media->width = $media->height = null;
             }
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
         }
 
         $media->save();
+
+        // regenerate thumb for the new file
+        $this->makeWebpThumb($media);
 
         return response()->json([
             'status' => 'ok',
@@ -321,6 +330,8 @@ class MediaController extends Controller
     /** Single-item soft delete */
     public function destroy(Media $media)
     {
+        // delete its webp thumb if present
+        $this->deleteThumbIfExists($media);
         $media->delete();
         return response()->json(['status' => 'ok']);
     }
@@ -344,10 +355,11 @@ class MediaController extends Controller
         if ($media->path) {
             try {
                 Storage::disk($media->disk ?: 'public')->delete($media->path);
-            } catch (\Throwable $e) {
-                // ignore file delete errors
+            } catch (\Throwable) {
+                // ignore
             }
         }
+        $this->deleteThumbIfExists($media);
 
         $media->forceDelete();
         return response()->json(['status' => 'ok']);
@@ -412,9 +424,10 @@ class MediaController extends Controller
                     if ($media->path) {
                         Storage::disk($media->disk ?: 'public')->delete($media->path);
                     }
-                } catch (\Throwable $e) {
-                    // ignore file delete errors
+                } catch (\Throwable) {
+                    // ignore
                 }
+                $this->deleteThumbIfExists($media);
                 $media->forceDelete();
                 $deleted++;
             }
@@ -428,7 +441,6 @@ class MediaController extends Controller
     /** Ensure the outgoing JSON shape is consistent for the modal */
     protected function formatMedia(Media $m): array
     {
-        // Build public URL (try disk url, fallback to /storage)
         $disk = $m->disk ?: 'public';
         $url = '';
         $exists = false;
@@ -439,7 +451,7 @@ class MediaController extends Controller
                 if ($exists) {
                     try {
                         $url = Storage::disk($disk)->url($m->path);
-                    } catch (\Throwable $e) {
+                    } catch (\Throwable) {
                         $url = asset('storage/' . ltrim($m->path, '/'));
                     }
                 } else {
@@ -448,8 +460,25 @@ class MediaController extends Controller
                         $url = asset('storage/' . ltrim($m->path, '/'));
                     }
                 }
-            } catch (\Throwable $e) {
+            } catch (\Throwable) {
                 $url = asset('storage/' . ltrim($m->path, '/'));
+            }
+        }
+
+        // Build thumb_url if a *_thumb.webp exists
+        $thumbUrl = null;
+        if ($m->path) {
+            $thumbRel = $this->thumbPathFor($m->path);
+            try {
+                if (Storage::disk($disk)->exists($thumbRel)) {
+                    try {
+                        $thumbUrl = Storage::disk($disk)->url($thumbRel);
+                    } catch (\Throwable) {
+                        $thumbUrl = asset('storage/' . ltrim($thumbRel, '/'));
+                    }
+                }
+            } catch (\Throwable) {
+                // ignore
             }
         }
 
@@ -470,7 +499,8 @@ class MediaController extends Controller
         return [
             'id' => $m->id,
             'url' => $url,
-            'thumb' => $url, // add real thumb variant if you generate one
+            'thumb' => $thumbUrl ?: $url,   // back-compat
+            'thumb_url' => $thumbUrl,       // preferred by UI
             'mime' => $m->mime,
             'type' => Str::before($m->mime ?? '', '/'),
             'filename' => $m->filename,
@@ -497,10 +527,96 @@ class MediaController extends Controller
         if (!array_key_exists($column, $cache)) {
             try {
                 $cache[$column] = Schema::hasColumn((new Media())->getTable(), $column);
-            } catch (\Throwable $e) {
+            } catch (\Throwable) {
                 $cache[$column] = false;
             }
         }
         return $cache[$column];
+    }
+
+    /* ===================== Thumbnail helpers (WEBP) ===================== */
+
+    /**
+     * Make a small WEBP thumbnail for grid view (e.g., 300px max side).
+     * If WEBP/GD is not available, this silently does nothing.
+     */
+    protected function makeWebpThumb(Media $media, int $max = 300): void
+    {
+        try {
+            $disk = $media->disk ?: 'public';
+            if (!$media->path || !Str::startsWith($media->mime, 'image/')) {
+                return;
+            }
+
+            // require GD + WEBP support
+            if (!function_exists('imagewebp')) {
+                return; // webp unsupported – skip
+            }
+
+            $srcAbs = Storage::disk($disk)->path($media->path);
+            if (!is_file($srcAbs))
+                return;
+
+            $imgData = @file_get_contents($srcAbs);
+            if ($imgData === false)
+                return;
+
+            $src = @imagecreatefromstring($imgData);
+            if (!$src)
+                return;
+
+            $w = imagesx($src);
+            $h = imagesy($src);
+            if ($w < 1 || $h < 1) {
+                imagedestroy($src);
+                return;
+            }
+
+            // fit inside square $max
+            $scale = min($max / $w, $max / $h, 1);
+            $nw = max(1, (int) ($w * $scale));
+            $nh = max(1, (int) ($h * $scale));
+
+            $dst = imagecreatetruecolor($nw, $nh);
+            imagealphablending($dst, true);
+            imagesavealpha($dst, true);
+            imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
+
+            $thumbRel = $this->thumbPathFor($media->path);
+            $thumbAbs = Storage::disk($disk)->path($thumbRel);
+
+            // ensure directory exists
+            @mkdir(dirname($thumbAbs), 0775, true);
+
+            // quality 80 is a good balance
+            imagewebp($dst, $thumbAbs, 80);
+
+            imagedestroy($dst);
+            imagedestroy($src);
+        } catch (\Throwable) {
+            // swallow thumbnail errors
+        }
+    }
+
+    /** Remove an existing thumb if present */
+    protected function deleteThumbIfExists(Media $media): void
+    {
+        try {
+            if (!$media->path)
+                return;
+            $disk = $media->disk ?: 'public';
+            $rel = $this->thumbPathFor($media->path);
+            if (Storage::disk($disk)->exists($rel)) {
+                Storage::disk($disk)->delete($rel);
+            }
+        } catch (\Throwable) {
+            // ignore
+        }
+    }
+
+    /** Given "media/2025/09/abc.jpg" → "media/2025/09/abc_thumb.webp" */
+    protected function thumbPathFor(string $originalPath): string
+    {
+        return preg_replace('/(\.[a-z0-9]+)$/i', '_thumb.webp', $originalPath);
     }
 }

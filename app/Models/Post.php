@@ -85,18 +85,24 @@ class Post extends Model implements HasMedia
             $this->optimizedRegisterMediaCollections();
         }
 
-        // images (enable responsive originals)
+        // images (enable responsive originals) — AVIF removed
         if (!method_exists($this, 'hasMediaCollection') || !$this->hasMediaCollection('images')) {
             $this->addMediaCollection('images')
-                ->acceptsMimeTypes(['image/jpeg','image/png','image/gif','image/webp','image/avif'])
-                ->withResponsiveImages(); // ✅ key addition
+                ->acceptsMimeTypes([
+                    'image/jpeg',
+                    'image/png',
+                    'image/gif',
+                    'image/webp',
+                   
+                ])
+                ->withResponsiveImages();
         }
 
         // featured (single file, also responsive)
         if (!method_exists($this, 'hasMediaCollection') || !$this->hasMediaCollection('featured')) {
             $this->addMediaCollection('featured')
                 ->singleFile()
-                ->withResponsiveImages(); // ✅ key addition
+                ->withResponsiveImages();
         }
     }
 
@@ -113,14 +119,14 @@ class Post extends Model implements HasMedia
         $widths = [320, 480, 640, 768, 1024, 1280, 1536, 1920];
 
         foreach ($widths as $w) {
-            // ✅ Force JPEG for width-based set
+            // JPEG width-based set
             $this->addMediaConversion('w' . $w)
                 ->format('jpg')
                 ->width($w)
                 ->performOnCollections('images', 'featured')
                 ->nonQueued();
 
-            // ✅ WebP counterpart
+            // WebP counterpart
             $this->addMediaConversion('w' . $w . '_webp')
                 ->format('webp')
                 ->width($w)
@@ -135,7 +141,7 @@ class Post extends Model implements HasMedia
             ->performOnCollections('images', 'featured')
             ->nonQueued();
 
-        // (Optional) keep md/lg/xl aliases as JPEG + WebP
+        // Aliases: JPEG + WebP
         $this->addMediaConversion('md')->format('jpg')->width(640)->performOnCollections('images', 'featured')->nonQueued();
         $this->addMediaConversion('lg')->format('jpg')->width(960)->performOnCollections('images', 'featured')->nonQueued();
         $this->addMediaConversion('xl')->format('jpg')->width(1200)->performOnCollections('images', 'featured')->nonQueued();

@@ -63,29 +63,21 @@ return [
             '-b',
             '-O3',
         ],
+        // ✅ Keep WebP optimizer
         Spatie\ImageOptimizer\Optimizers\Cwebp::class => [
             '-m 6',
             '-pass 10',
             '-mt',
             '-q 90',
         ],
-        Spatie\ImageOptimizer\Optimizers\Avifenc::class => [
-            '-a cq-level=23',
-            '-j all',
-            '--min 0',
-            '--max 63',
-            '--minalpha 0',
-            '--maxalpha 63',
-            '-a end-usage=q',
-            '-a tune=ssim',
-        ],
+
     ],
 
     // Image generators (for thumbs / conversions)
     'image_generators' => [
         Spatie\MediaLibrary\Conversions\ImageGenerators\Image::class,
+        // ✅ Keep WebP generator
         Spatie\MediaLibrary\Conversions\ImageGenerators\Webp::class,
-        Spatie\MediaLibrary\Conversions\ImageGenerators\Avif::class,
         Spatie\MediaLibrary\Conversions\ImageGenerators\Pdf::class,
         Spatie\MediaLibrary\Conversions\ImageGenerators\Svg::class,
         Spatie\MediaLibrary\Conversions\ImageGenerators\Video::class,

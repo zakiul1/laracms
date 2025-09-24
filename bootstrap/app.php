@@ -42,6 +42,8 @@ return Application::configure(basePath: dirname(__DIR__))
         App\Providers\WidgetServiceProvider::class,
         App\Providers\SettingsServiceProvider::class,
         \App\Support\Shortcode\ShortcodeServiceProvider::class,
+        App\Support\Media\MediaServiceProvider::class,
+
     ])
     // ⬇️ Register class-based Artisan commands here
     ->withCommands([

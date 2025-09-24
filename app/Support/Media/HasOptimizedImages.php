@@ -18,7 +18,7 @@ trait HasOptimizedImages
                 'image/png',
                 'image/gif',
                 'image/webp',
-                'image/avif',
+
             ]);
     }
 
@@ -27,14 +27,14 @@ trait HasOptimizedImages
         $widths = [320, 480, 640, 768, 1024, 1280, 1536, 1920];
 
         foreach ($widths as $w) {
-            // ✅ Always JPEG for width-based set
+            // JPEG width-based set
             $this->addMediaConversion("w{$w}")
                 ->format('jpg')
                 ->width($w)
                 ->performOnCollections('images')
                 ->nonQueued();
 
-            // ✅ WebP counterpart
+            // WebP counterpart
             $this->addMediaConversion("w{$w}_webp")
                 ->format('webp')
                 ->width($w)
