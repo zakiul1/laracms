@@ -81,6 +81,7 @@ abstract class BaseContentController extends Controller
             $this->syncGallery($post, (array) $r->input('gallery', []));
             $this->syncMetas($post, (array) $r->input('meta', []));
             $this->syncSeo($post, (array) $r->input('seo', []));
+            $this->syncTags($post, $r); // ✅ ensure tags are saved
 
             // 🔧 NEW: attach Spatie featured media
             $this->syncFeaturedMedia($r, $post);
@@ -129,6 +130,7 @@ abstract class BaseContentController extends Controller
             $this->syncGallery($post, (array) $r->input('gallery', []));
             $this->syncMetas($post, (array) $r->input('meta', []));
             $this->syncSeo($post, (array) $r->input('seo', []));
+            $this->syncTags($post, $r); // ✅ ensure tags are updated
 
             // 🔧 NEW: attach/update Spatie featured media
             $this->syncFeaturedMedia($r, $post);
@@ -174,6 +176,20 @@ abstract class BaseContentController extends Controller
             'password' => ['nullable', 'string', 'max:255'],
             'author_id' => ['nullable', 'exists:users,id'],
             'published_at' => ['nullable', 'date'],
+
+            // ✅ allow arrays from the sidebar and tags UI
+            'categories' => ['sometimes', 'array'],
+            'categories.*' => ['integer'],
+            'tags' => ['sometimes', 'array'],
+            'tags.*' => ['string', 'max:120'],
+
+            // ✅ CRITICAL: allow nested SEO payload so it isn't dropped
+            'seo' => ['sometimes', 'array'],
+            'seo.meta_title' => ['nullable', 'string', 'max:255'],
+            'seo.meta_keywords' => ['nullable', 'string', 'max:500'],
+            'seo.meta_description' => ['nullable', 'string', 'max:500'],
+            'seo.robots_index' => ['nullable', 'boolean'],
+            'seo.robots_follow' => ['nullable', 'boolean'],
         ]);
 
         // slug default + unique within type (incl. trashed)
@@ -269,12 +285,11 @@ abstract class BaseContentController extends Controller
 
     protected function syncSeo(Post $post, array $seo): void
     {
-        $payload = Arr::only($seo, [
+        // Only accept expected keys
+        $payload = \Illuminate\Support\Arr::only($seo, [
             'meta_title',
             'meta_description',
             'meta_keywords',
-            'robots_index',
-            'robots_follow',
             'og_title',
             'og_description',
             'og_image_id',
@@ -283,10 +298,83 @@ abstract class BaseContentController extends Controller
             'twitter_image_id',
         ]);
 
-        $payload['robots_index'] = (bool) ($payload['robots_index'] ?? true);
-        $payload['robots_follow'] = (bool) ($payload['robots_follow'] ?? true);
+        // Explicitly handle checkboxes: if the field is missing, it should be false
+        $payload['robots_index'] = array_key_exists('robots_index', $seo) ? (bool) $seo['robots_index'] : false;
+        $payload['robots_follow'] = array_key_exists('robots_follow', $seo) ? (bool) $seo['robots_follow'] : false;
 
-        $post->seo()->updateOrCreate([], $payload);
+        // IMPORTANT: match on this post, so we update/create the correct row
+        $post->seo()->updateOrCreate(
+            ['post_id' => $post->id],
+            $payload
+        );
+    }
+
+    protected function syncTags(Post $post, Request $r): void
+    {
+        // Accept both "tags" and "tags[]" from the form
+        $raw = $r->input('tags', []);
+        if (!is_array($raw)) {
+            $raw = [$raw];
+        }
+
+        // Split by comma/pipe/newline; trim; dedupe
+        $names = [];
+        foreach ($raw as $chunk) {
+            if (is_string($chunk)) {
+                foreach (preg_split('/[,|\n]/', $chunk) as $one) {
+                    $one = trim($one);
+                    if ($one !== '') {
+                        $names[] = $one;
+                    }
+                }
+            }
+        }
+        $names = array_values(array_unique($names));
+
+        // Nothing to do
+        if (empty($names)) {
+            // Clear existing tag relationships for this post
+            \App\Models\TermRelationship::where('object_id', $post->id)
+                ->whereIn('term_taxonomy_id', function ($q) {
+                    $q->select('id')->from('term_taxonomies')->where('taxonomy', 'post_tag');
+                })
+                ->delete();
+            return;
+        }
+
+        $ttIds = [];
+        foreach ($names as $name) {
+            $slug = \Illuminate\Support\Str::slug($name);
+
+            // terms
+            $term = \App\Models\Term::firstOrCreate(
+                ['slug' => $slug],
+                ['name' => $name]
+            );
+
+            // term_taxonomies (taxonomy = post_tag)
+            $tt = \App\Models\TermTaxonomy::firstOrCreate(
+                ['term_id' => $term->id, 'taxonomy' => 'post_tag'],
+                ['description' => null, 'parent_id' => 0, 'count' => 0]
+            );
+
+            $ttIds[] = $tt->id;
+        }
+
+        // Remove all existing tag links for this post
+        \App\Models\TermRelationship::where('object_id', $post->id)
+            ->whereIn('term_taxonomy_id', function ($q) {
+                $q->select('id')->from('term_taxonomies')->where('taxonomy', 'post_tag');
+            })
+            ->delete();
+
+        // Attach current set
+        foreach ($ttIds as $ttId) {
+            \App\Models\TermRelationship::updateOrCreate(
+                ['object_id' => $post->id, 'term_taxonomy_id' => $ttId],
+                []
+            );
+        }
     }
 
     /** Keep ONLY multiple featured images (gallery). */

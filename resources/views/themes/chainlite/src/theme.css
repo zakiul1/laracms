@@ -3,3 +3,6 @@
 
 /* keep your @source lines to scope scanning to this theme only */
 @source "../views/**/*.blade.php";
+
+
+[x-cloak] { display: none !important; }

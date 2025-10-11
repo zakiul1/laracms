@@ -110,6 +110,14 @@
                         }
                     }
 
+                    // *** Avoid legacy AVIF originals ***
+                    if ($legacyUrl) {
+                        $path = strtolower(parse_url($legacyUrl, PHP_URL_PATH) ?? '');
+                        if (str_ends_with($path, '.avif')) {
+                            $legacyUrl = null; // skip AVIF original; show placeholder instead
+                        }
+                    }
+
                     // Alternate sides
                     $reverse = $i % 2 === 1;
                 @endphp
@@ -118,7 +126,6 @@
                     {{-- Image column --}}
                     <div class="{{ $reverse ? 'md:order-2' : '' }}">
                         @if ($spatie || $legacyUrl)
-                            {{-- Use responsive component (prefers Spatie native srcset; falls back to conversions) --}}
                             <x-media.picture :media="$spatie" :src="$legacyUrl" conversion="w1280" :sizes="$sizes"
                                 :alt="$item->title" class="w-full h-auto rounded-xl object-cover shadow-sm" />
                         @else

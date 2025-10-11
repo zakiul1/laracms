@@ -6,6 +6,15 @@
 
     // Default status: Published for new items; preserve old() on validation error
     $statusValue = old('status', $post->status ?: 'published');
+
+    // --- Tags display helper (robust even if relation is missing/not loaded) ---
+    // Use data_get + collect so we never call methods on null.
+    $existingTags = collect(data_get($post, 'tags', []))->pluck('name')->all();
+    $tagsOld = old('tags', $existingTags);
+    $tagsDisplay = is_array($tagsOld) ? implode(', ', $tagsOld) : (string) $tagsOld;
+
+    // --- SEO payload for sticky values ---
+    $seo = old('seo', optional($post->seo)->toArray() ?? []);
 @endphp
 
 <form x-data="{ action: 'save' }" method="POST" action="{{ $saveRoute }}" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -86,8 +95,6 @@
                         </li>
                         <li><code>resources/views/themes/{{ theme_slug() }}/templates/page/*.blade.php</code></li>
                         <li><code>resources/views/themes/{{ theme_slug() }}/pages/*.blade.php</code></li>
-                        {{-- legacy/alt layouts also supported:
-                     resources/themes/{{ theme_slug() }}/views/pages/templates/*.blade.php, etc. --}}
                     </ul>
                 @else
                     <div class="text-xs text-amber-600">
@@ -114,11 +121,9 @@
             </div>
         @endif
 
-
         {{-- SEO Settings --}}
         <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
             <h3 class="font-semibold mb-2">SEO Settings</h3>
-            @php $seo = old('seo', optional($post->seo)->toArray() ?? []); @endphp
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
@@ -139,15 +144,19 @@
                     class="w-full border border-outline rounded-radius bg-surface px-2 py-1.5 dark:border-outline-dark dark:bg-surface-dark/50">{{ $seo['meta_description'] ?? '' }}</textarea>
             </div>
 
+            {{-- Hidden fallbacks ensure unchecked checkboxes submit "0" --}}
+            <input type="hidden" name="seo[robots_index]" value="0">
+            <input type="hidden" name="seo[robots_follow]" value="0">
+
             <div class="mt-3">
                 <label class="block text-xs mb-1">Robots</label>
                 <div class="flex items-center gap-4">
                     <label class="inline-flex items-center gap-2 text-xs">
-                        <input type="checkbox" name="seo[robots_index]" value="1" @checked($seo['robots_index'] ?? true)>
+                        <input type="checkbox" name="seo[robots_index]" value="1" @checked((bool) ($seo['robots_index'] ?? true))>
                         Index
                     </label>
                     <label class="inline-flex items-center gap-2 text-xs">
-                        <input type="checkbox" name="seo[robots_follow]" value="1" @checked($seo['robots_follow'] ?? true)>
+                        <input type="checkbox" name="seo[robots_follow]" value="1" @checked((bool) ($seo['robots_follow'] ?? true))>
                         Follow
                     </label>
                 </div>
@@ -275,9 +284,33 @@
         {{-- Tags --}}
         <div class="rounded-radius border border-outline dark:border-outline-dark p-3">
             <h3 class="font-semibold mb-2">Tags</h3>
-            <input type="text" name="tags[]"
-                class="w-full border border-outline rounded-radius px-2 py-1.5 text-sm"
-                placeholder="Comma separated or add one by one">
+
+            {{-- Display as a single comma-separated input for UX, submit as tags[] for controller compatibility --}}
+            <input type="text" class="w-full border border-outline rounded-radius px-2 py-1.5 text-sm"
+                placeholder="Comma separated (e.g. news, laravel, tips)" value="{{ $tagsDisplay }}"
+                oninput="
+                    (function(el){
+                        const v = el.value || '';
+                        const container = el.nextElementSibling;
+                        container.innerHTML = '';
+                        v.split(/[,|\n]/).map(s => s.trim()).filter(Boolean).forEach(val => {
+                            const i = document.createElement('input');
+                            i.type = 'hidden';
+                            i.name = 'tags[]';
+                            i.value = val;
+                            container.appendChild(i);
+                        });
+                    })(this);
+                ">
+            <div>
+                @foreach (array_filter(array_map('trim', preg_split('/[,|\n]/', $tagsDisplay) ?: [])) as $t)
+                    <input type="hidden" name="tags[]" value="{{ $t }}">
+                @endforeach
+            </div>
+
+            <p class="text-xs text-gray-500 mt-2">
+                Tip: separate tags with commas. They’ll be created if they don’t exist.
+            </p>
         </div>
 
         {{-- Custom Fields --}}

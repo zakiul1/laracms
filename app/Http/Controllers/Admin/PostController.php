@@ -4,12 +4,13 @@ namespace App\Http\Controllers\Admin;
 
 use App\Models\Post;
 use App\Models\TermTaxonomy;
-use App\Models\Media; // legacy/custom Media model
+use App\Models\Media;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use App\Support\SyncFeatured;
 
 class PostController extends BaseContentController
 {
@@ -25,13 +26,17 @@ class PostController extends BaseContentController
         return $this->currentType();
     }
 
+    /* -----------------------------------------------------------------
+     | Create / Edit Views
+     * ----------------------------------------------------------------*/
+
     public function create()
     {
         $type = $this->currentType();
 
         $post = new Post([
             'type' => $type,
-            'status' => 'draft', // UI default can still flip to Published
+            'status' => 'draft',
             'visibility' => 'public',
             'is_sticky' => false,
             'allow_comments' => true,
@@ -80,16 +85,15 @@ class PostController extends BaseContentController
     public function store(Request $request)
     {
         $type = $this->currentType();
-
         $data = $this->validatedData($request);
         $galleryIds = $this->normalizedGalleryIds($request);
 
         $post = new Post();
         $post->fill($data);
-        $post->type = $type; // enforce route type
+        $post->type = $type;
         $post->author_id = $post->author_id ?: (Auth::id() ?? null);
 
-        // Featured fallback: first gallery id
+        // Featured fallback
         if (empty($post->featured_media_id) && !empty($galleryIds)) {
             $post->featured_media_id = $galleryIds[0];
         }
@@ -99,6 +103,13 @@ class PostController extends BaseContentController
         }
 
         $post->save();
+
+        // ✅ Sync SEO, Meta, Tags
+        $this->syncSeo($post, (array) $request->input('seo', []));
+        $this->syncMetas($post, (array) $request->input('meta', []));
+        $this->syncTags($post, $request);
+
+        SyncFeatured::run($post);
 
         if ($type === 'post') {
             $this->syncCategories($post, $this->extractCategoryIds($request));
@@ -121,7 +132,7 @@ class PostController extends BaseContentController
 
         $post->fill($data);
 
-        // Featured fallback: first gallery id
+        // Featured fallback
         if (empty($post->featured_media_id) && !empty($galleryIds)) {
             $post->featured_media_id = $galleryIds[0];
         }
@@ -131,6 +142,13 @@ class PostController extends BaseContentController
         }
 
         $post->save();
+
+        // ✅ Sync SEO, Meta, Tags
+        $this->syncSeo($post, (array) $request->input('seo', []));
+        $this->syncMetas($post, (array) $request->input('meta', []));
+        $this->syncTags($post, $request);
+
+        SyncFeatured::run($post);
 
         if ($type === 'post') {
             $this->syncCategories($post, $this->extractCategoryIds($request));
@@ -169,6 +187,18 @@ class PostController extends BaseContentController
             // unified picker gallery[]
             'gallery' => ['sometimes', 'array'],
             'gallery.*' => ['integer', 'exists:media,id'],
+
+            // ✅ SEO and Meta arrays
+            'seo' => ['sometimes', 'array'],
+            'seo.meta_title' => ['nullable', 'string', 'max:255'],
+            'seo.meta_keywords' => ['nullable', 'string', 'max:500'],
+            'seo.meta_description' => ['nullable', 'string', 'max:500'],
+            'seo.robots_index' => ['nullable', 'boolean'],
+            'seo.robots_follow' => ['nullable', 'boolean'],
+
+            'meta' => ['sometimes', 'array'],
+            'meta.*.key' => ['nullable', 'string', 'max:255'],
+            'meta.*.value' => ['nullable', 'string', 'max:1000'],
         ], [
             'featured_media_id.exists' => 'Selected featured image does not exist.',
         ]);
@@ -188,9 +218,6 @@ class PostController extends BaseContentController
         return $out;
     }
 
-    /**
-     * Extract category term_taxonomy IDs (supports categories[] or category_ids[]).
-     */
     protected function extractCategoryIds(Request $request): array
     {
         $ids = array_filter(array_map('intval', (array) $request->input('categories', [])));
@@ -212,7 +239,6 @@ class PostController extends BaseContentController
      | SYNC HELPERS
      * ----------------------------------------------------------------*/
 
-    /** Sync categories into term_relationships (POSTS only) */
     protected function syncCategories(Post $post, array $termTaxonomyIds): void
     {
         $existing = DB::table('term_relationships')
@@ -247,7 +273,6 @@ class PostController extends BaseContentController
         }
     }
 
-    /** Persist gallery to post_media (role=featured, with position) */
     protected function syncGallery(Post $post, array $mediaIds): void
     {
         DB::table('post_media')
@@ -271,52 +296,41 @@ class PostController extends BaseContentController
         DB::table('post_media')->insert($rows);
     }
 
-    /**
-     * Mirror legacy featured_media_id into Spatie collection 'images'
-     * WITHOUT altering the original legacy file on its disk.
-     */
     protected function syncSpatieFeaturedFromLegacy(Post $post): void
     {
-        if (!$this->spatieMediaReady()) {
+        if (!$this->spatieMediaReady())
             return;
-        }
 
-        // Keep just the latest selection reflected in Spatie
         if (method_exists($post, 'clearMediaCollection')) {
             $post->clearMediaCollection('images');
         }
 
-        $legacy = $post->featuredMedia; // belongsTo(Media::class, 'featured_media_id')
-        if (!$legacy) {
+        $legacy = $post->featuredMedia;
+        if (!$legacy)
             return;
-        }
 
-        // Prefer non-destructive add from the legacy disk path
         $disk = $legacy->disk ?: 'public';
         $relPath = $legacy->path ?? $legacy->file_path ?? null;
 
         if ($relPath && method_exists($post, 'addMediaFromDisk')) {
             try {
                 $post->addMediaFromDisk($relPath, $disk)
-                    ->preservingOriginal()                  // <- do not move/remove the legacy file
+                    ->preservingOriginal()
                     ->withResponsiveImages()
                     ->toMediaCollection('images');
                 return;
             } catch (\Throwable $e) {
-                // fall through to absolute path approach
             }
         }
 
-        // Fallback: absolute path (still preserve original)
         $abs = $this->resolveLegacyMediaAbsolutePath($legacy);
         if ($abs && is_file($abs) && method_exists($post, 'addMedia')) {
             try {
                 $post->addMedia($abs)
-                    ->preservingOriginal()                  // <- keep legacy file intact
+                    ->preservingOriginal()
                     ->withResponsiveImages()
                     ->toMediaCollection('images');
             } catch (\Throwable $e) {
-                // swallow/log if desired
             }
         }
     }
@@ -327,14 +341,10 @@ class PostController extends BaseContentController
             $class = config('media-library.media_model');
             if (!$class || !class_exists($class))
                 return false;
-
-            /** @var \Illuminate\Database\Eloquent\Model $m */
             $m = app($class);
             $table = $m->getTable();
-
             if (!Schema::hasTable($table))
                 return false;
-
             return Schema::hasColumn($table, 'model_id') && Schema::hasColumn($table, 'model_type');
         } catch (\Throwable $e) {
             return false;
@@ -342,7 +352,7 @@ class PostController extends BaseContentController
     }
 
     /* -----------------------------------------------------------------
-     | Categories UI data (used only when type=post)
+     | Categories UI & Route helpers
      * ----------------------------------------------------------------*/
 
     protected function categoriesTree(): array
@@ -353,7 +363,6 @@ class PostController extends BaseContentController
             : (in_array('parent_id', $cols, true) ? 'parent_id' : null);
 
         $hasTermRelation = method_exists(TermTaxonomy::class, 'term');
-
         $rows = TermTaxonomy::query()
             ->where('taxonomy', 'category')
             ->when($hasTermRelation, fn($q) => $q->with('term'))
@@ -419,9 +428,6 @@ class PostController extends BaseContentController
         return is_array($cfg) && !empty($cfg) ? $cfg : [];
     }
 
-    /* -----------------------------------------------------------------
-     | Route helper
-     * ----------------------------------------------------------------*/
     protected function indexRouteForType(string $type): string
     {
         return $type === 'page' ? 'admin.pages.index' : 'admin.posts.index';
@@ -438,10 +444,6 @@ class PostController extends BaseContentController
         return redirect()->route('admin.posts.index')->with('success', 'Post deleted.');
     }
 
-
-    /* -----------------------------------------------------------------
-     | Legacy path resolver
-     * ----------------------------------------------------------------*/
     protected function resolveLegacyMediaAbsolutePath(Media $legacy): ?string
     {
         if (method_exists($legacy, 'absolutePath'))

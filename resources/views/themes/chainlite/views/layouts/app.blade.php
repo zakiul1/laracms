@@ -38,7 +38,8 @@
         content="{{ $seo['robots_index'] ?? true ? 'index' : 'noindex' }}, {{ $seo['robots_follow'] ?? true ? 'follow' : 'nofollow' }}">
 
     {{-- WordPress-like: print enqueued styles/scripts for <head> --}}
-    @vite('resources/views/themes/chainlite/src/theme.css')
+    @vite(['resources/views/themes/chainlite/assets/theme.js', 'resources/views/themes/chainlite/assets/dist/theme.css'])
+
     {!! theme_head() !!}
     @stack('head')
 </head>

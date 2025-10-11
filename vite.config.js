@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
                     "resources/js/app.js",
 
                     // Theme CSS (Tailwind entry)
+                    "resources/views/themes/chainlite/assets/theme.js",
                     "resources/views/themes/chainlite/src/theme.css",
 
                     // If you have a theme JS entry, uncomment next line and ensure the file exists:
